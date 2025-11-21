@@ -6,7 +6,7 @@ from sklearn.metrics import accuracy_score, precision_recall_fscore_support
 from tensorflow.keras.preprocessing.text import Tokenizer
 from tensorflow.keras.preprocessing.sequence import pad_sequences
 from tensorflow.keras.models import Sequential, Model
-from tensorflow.keras.layers import Embedding, Bidirectional, LSTM, Dense, Dropout, Conv1D, GlobalMaxPooling1D, GRU, Input, concatenate
+from tensorflow.keras.layers import Embedding, Bidirectional, LSTM, Dense, Dropout, Conv1D, GlobalMaxPooling1D, GRU, Input
 from tensorflow.keras.callbacks import EarlyStopping
 from tensorflow.keras.initializers import Constant
 from tensorflow.keras.regularizers import l2 
@@ -20,12 +20,12 @@ import random
 os.environ['TF_CPP_CPP_LOG_LEVEL'] = '3'
 import tensorflow as tf
 
-# --- Configuration (MAXIMAL STABLE BiLSTM CAPACITY) ---
+# --- Configuration (MAXIMAL STABLE SOFT VOTING ENSEMBLE) ---
 MAX_WORDS = 20000       
 MAX_LEN = 150           
-EMBEDDING_DIM = 64      # Ultra-stable embedding dimension
-RNN_UNITS = 64          # Ultra-stable recurrent units
-DENSE_UNITS = 128       # Ultra-stable dense units
+EMBEDDING_DIM = 64      # Stable embedding dimension
+RNN_UNITS = 64          # Stable recurrent units
+DENSE_UNITS = 128       # Stable dense units
 NUM_CLASSES = 6
 EPOCHS = 20             
 NUM_REVIEWS = 10        
@@ -89,7 +89,7 @@ def handle_negation(texts):
     return processed_texts
 
 
-# --- MAXIMAL STABILITY BiLSTM MODEL ---
+# --- Ensemble Model Building Functions ---
 
 def create_embedding_layer(num_words, embedding_matrix=None, name='embedding_layer'):
     """Creates the Embedding layer, initialized with pre-trained vectors."""
@@ -102,20 +102,14 @@ def create_embedding_layer(num_words, embedding_matrix=None, name='embedding_lay
         name=name
     )
 
-def build_bilstm_model(num_words, embedding_matrix):
-    """
-    Builds the Maximal Stability BiLSTM Model (simplest robust architecture).
-    """
+def build_cnn_model(num_words, embedding_matrix):
+    """Builds the deep CNN model for local features."""
     input_layer = Input(shape=(MAX_LEN,))
-    embedding_output = create_embedding_layer(num_words, embedding_matrix)(input_layer)
-    x = Dropout(0.3)(embedding_output)
+    embedding_output = create_embedding_layer(num_words, embedding_matrix, name='cnn_embed')(input_layer)
 
-    # Simplified stable two-layer BiLSTM
-    x = Bidirectional(LSTM(RNN_UNITS, return_sequences=True, dropout=0.1, 
-                           kernel_regularizer=l2(REGULARIZATION_RATE)))(x)
-    x = Bidirectional(LSTM(RNN_UNITS, kernel_regularizer=l2(REGULARIZATION_RATE)))(x)
-    
-    # Classification Layers
+    x = Conv1D(filters=RNN_UNITS, kernel_size=3, activation='relu', padding='same', 
+               kernel_regularizer=l2(REGULARIZATION_RATE))(embedding_output)
+    x = GlobalMaxPooling1D()(x)
     x = Dense(DENSE_UNITS, activation='relu', kernel_regularizer=l2(REGULARIZATION_RATE))(x)
     x = Dropout(0.5)(x)
     output_layer = Dense(NUM_CLASSES, activation='softmax')(x)
@@ -123,14 +117,48 @@ def build_bilstm_model(num_words, embedding_matrix):
     model = Model(inputs=input_layer, outputs=output_layer)
     model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
     return model
+
+def build_bilstm_model(num_words, embedding_matrix):
+    """Builds the stable two-layer BiLSTM model for sequential context."""
+    input_layer = Input(shape=(MAX_LEN,))
+    embedding_output = create_embedding_layer(num_words, embedding_matrix, name='lstm_embed')(input_layer)
+    x = Dropout(0.3)(embedding_output)
+
+    x = Bidirectional(LSTM(RNN_UNITS, return_sequences=True, dropout=0.1, 
+                           kernel_regularizer=l2(REGULARIZATION_RATE)))(x)
+    x = Bidirectional(LSTM(RNN_UNITS, kernel_regularizer=l2(REGULARIZATION_RATE)))(x)
     
+    x = Dense(DENSE_UNITS, activation='relu', kernel_regularizer=l2(REGULARIZATION_RATE))(x)
+    x = Dropout(0.5)(x)
+    output_layer = Dense(NUM_CLASSES, activation='softmax')(x)
+    
+    model = Model(inputs=input_layer, outputs=output_layer)
+    model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
+    return model
+
+def build_gru_model(num_words, embedding_matrix):
+    """Builds the stable BiGRU model for efficient sequence processing."""
+    input_layer = Input(shape=(MAX_LEN,))
+    embedding_output = create_embedding_layer(num_words, embedding_matrix, name='gru_embed')(input_layer)
+    x = Dropout(0.3)(embedding_output)
+
+    x = Bidirectional(GRU(RNN_UNITS, dropout=0.1, 
+                          kernel_regularizer=l2(REGULARIZATION_RATE)))(x)
+    
+    x = Dense(DENSE_UNITS, activation='relu', kernel_regularizer=l2(REGULARIZATION_RATE))(x)
+    x = Dropout(0.5)(x)
+    output_layer = Dense(NUM_CLASSES, activation='softmax')(x)
+    
+    model = Model(inputs=input_layer, outputs=output_layer)
+    model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
+    return model
 
 
 # --- Caching function to load data and train the model once ---
 
 @st.cache_resource(show_spinner=True)
 def load_and_train_model():
-    """Loads data, performs AGGRESSIVE class balancing, and trains the BiLSTM Model."""
+    """Loads data, performs AGGRESSIVE class balancing, and trains the Soft Voting Ensemble."""
     st.info("Loading and pre-processing dataset...")
     
     # 1. Load Data
@@ -150,14 +178,12 @@ def load_and_train_model():
     
     df_train = pd.DataFrame({'text': train_texts_preprocessed, 'label': train_labels_raw})
     
-    # Calculate target sample size 
     label_counts = df_train['label'].value_counts()
     max_count = label_counts.max()
     target_count = int(max_count * 0.7) 
 
     balanced_samples = []
     
-    # Undersample/Oversample all classes to be closer to the median count for stability
     for label in label_counts.index:
         subset = df_train[df_train['label'] == label]
         
@@ -205,7 +231,6 @@ def load_and_train_model():
         # 4a. Extreme Anti-Negation Mirror Logic (Guarantees not_happy != happy)
         if word.startswith('not_') or word.startswith('never_'):
             
-            # Use random initialization for now, but ensure the NEGATION MIRROR is strong
             negated_init = np.random.normal(loc=0.0, scale=std_dev_negated, size=(EMBEDDING_DIM,))
             
             if word.startswith('not_'):
@@ -213,10 +238,9 @@ def load_and_train_model():
                 original_index = tokenizer.word_index.get(original_word)
                 
                 if original_index is not None and original_index < num_words:
-                    # The mirror vector is the NEGATIVE of the base vector
                     negated_init = -embedding_matrix[original_index] * 1.0 
             
-            embedding_matrix[index] = negated_init # Set the extreme mirror vector
+            embedding_matrix[index] = negated_init 
             
         # 4b. Hyper-initialize Surprise keywords to separate them from Joy
         if word in ['wow', 'surprise', 'unexpected', 'shocked', 'unbelievable', 'didn\'t', 'didnt', 'did_not']:
@@ -228,10 +252,14 @@ def load_and_train_model():
         embedding_matrix[negated_index] = np.random.normal(loc=0.0, scale=std_dev_negated, size=(EMBEDDING_DIM,))
 
 
-    # 5. Build and Train the BiLSTM Model
-    st.info(f"Building and training the BiLSTM Model for up to {EPOCHS} epochs...")
+    # 5. Build and Train the Soft Voting Ensemble (3 separate models)
+    st.info(f"Building and training 3 independent models for the Soft Voting Ensemble for up to {EPOCHS} epochs...")
     
-    model = build_bilstm_model(num_words, embedding_matrix)
+    models = [
+        build_bilstm_model(num_words, embedding_matrix),
+        build_cnn_model(num_words, embedding_matrix),
+        build_gru_model(num_words, embedding_matrix)
+    ]
 
     early_stopping = EarlyStopping(
         monitor='val_loss', 
@@ -240,26 +268,34 @@ def load_and_train_model():
         verbose=0 
     )
 
-    try:
-        model.fit(
-            train_padded, 
-            train_labels_one_hot,
-            epochs=EPOCHS, 
-            batch_size=128, 
-            validation_split=0.1,
-            # No static class weights needed, as balancing is done via sampling
-            callbacks=[early_stopping],
-            verbose=0 
-        )
-    except Exception as e:
-        st.error(f"Error during training the BiLSTM Model: {e}")
+    for i, model in enumerate(models):
+        st.info(f"Training Model {i+1}...")
+        try:
+            model.fit(
+                train_padded, 
+                train_labels_one_hot,
+                epochs=EPOCHS, 
+                batch_size=128, 
+                validation_split=0.1,
+                callbacks=[early_stopping],
+                verbose=0 
+            )
+        except Exception as e:
+            st.error(f"Error during training Model {i+1}: {e}")
+            models[i] = None # Remove failed model
+            continue
+
+    
+    # 6. Ensemble Prediction and Evaluation
+    pred_probs_list = [model.predict(test_padded, verbose=0) for model in models if model is not None]
+    
+    if not pred_probs_list:
+        st.error("All models failed to train. Cannot proceed with evaluation.")
         return None, tokenizer, {'accuracy': 0, 'precision': 0, 'recall': 0, 'f1_score': 0}
-            
-    # 6. Prediction and Evaluation
-    
-    pred_probs = model.predict(test_padded, verbose=0)
-    
-    y_pred = np.argmax(pred_probs, axis=1)
+
+    # Soft Voting: Average the probabilities across all models
+    ensemble_probs = np.mean(pred_probs_list, axis=0)
+    y_pred = np.argmax(ensemble_probs, axis=1)
     
     accuracy = accuracy_score(test_labels, y_pred)
     precision, recall, f1, _ = precision_recall_fscore_support(
@@ -273,18 +309,23 @@ def load_and_train_model():
         'f1_score': f1
     }
 
-    st.success(f"Model Training Complete! BiLSTM Accuracy: {accuracy:.4f}")
-    return model, tokenizer, metrics
+    st.success(f"Model Training Complete! Soft Voting Ensemble Accuracy: {accuracy:.4f}")
+    return models, tokenizer, metrics
 
 
 # --- Prediction Function ---
-def predict_emotion(model, tokenizer, text):
-    """Predicts the emotion of a given review text using the single BiLSTM model."""
+def predict_emotion(ensemble_models, tokenizer, text):
+    """Predicts the emotion of a given review text using the Soft Voting Ensemble."""
     preprocessed_text = handle_negation([text])[0]
     sequence = tokenizer.texts_to_sequences([preprocessed_text])
     padded_sequence = pad_sequences(sequence, maxlen=MAX_LEN, padding='post', truncating='post')
     
-    ensemble_prediction = model.predict(padded_sequence, verbose=0)[0]
+    pred_probs_list = [model.predict(padded_sequence, verbose=0) for model in ensemble_models if model is not None]
+    
+    if not pred_probs_list:
+        return "ERROR"
+        
+    ensemble_prediction = np.mean(pred_probs_list, axis=0)[0]
     
     predicted_id = np.argmax(ensemble_prediction)
     predicted_label = id_to_label[predicted_id].capitalize()
@@ -489,10 +530,10 @@ def main():
     
     # Load and train the model (cached)
     try:
-        model, tokenizer, metrics = load_and_train_model()
+        models, tokenizer, metrics = load_and_train_model()
         st.session_state.is_trained = True
         st.session_state.metrics = metrics
-        st.session_state.model = model # Store model instance for prediction
+        st.session_state.models = models # Store model instance for prediction
     except Exception as e:
         # In case of initialization failure, log error and show a warning
         st.error(f"Failed to initialize model: {e}")
@@ -518,6 +559,7 @@ def main():
     cols = st.columns(2)
     
     # Use a fixed list of emotions for the 10 samples
+    # Covers all 6 primary emotions + the 4 most challenging/frequently misclassified
     fixed_sample_emotions = ['sadness', 'joy', 'love', 'anger', 'fear', 'surprise', 'sadness', 'joy', 'love', 'anger']
 
     for i in range(NUM_REVIEWS):
@@ -543,7 +585,7 @@ def main():
 
     # --- Analysis Button ---
     if st.button("Analyze All 10 Reviews", use_container_width=True, type="primary"):
-        if not st.session_state.is_trained or st.session_state.model is None:
+        if not st.session_state.is_trained or st.session_state.models is None:
             st.warning("Model is not fully initialized. Please wait a moment and try again.")
             return
 
@@ -557,7 +599,7 @@ def main():
                 st.session_state.analysis_results = [] # Clear results if incomplete
                 return
 
-            predicted_emotion = predict_emotion(st.session_state.model, tokenizer, review)
+            predicted_emotion = predict_emotion(st.session_state.models, tokenizer, review)
             all_emotions.append(predicted_emotion)
             
             st.session_state.analysis_results.append({
