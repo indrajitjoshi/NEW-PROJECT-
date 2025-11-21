@@ -18,14 +18,14 @@ import re
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 import tensorflow as tf
 
-# --- Configuration (Optimized for 94%+ Accuracy) ---
-MAX_WORDS = 20000       # Max number of words to keep in the vocabulary
-MAX_LEN = 150           # Increased for capturing longer, complex negation/surprise contexts
-EMBEDDING_DIM = 128     # Dimension of the word embeddings
-RNN_UNITS = 256         # Increased capacity for complex emotional patterns (Joy vs Surprise)
-DENSE_UNITS = 768       # Increased capacity for final feature separation
+# --- Configuration (MAXIMAL Capacity for 94%+ Accuracy) ---
+MAX_WORDS = 20000       
+MAX_LEN = 150           
+EMBEDDING_DIM = 128     
+RNN_UNITS = 300         # MAXIMAL CAPACITY
+DENSE_UNITS = 1024      # MAXIMAL CAPACITY
 NUM_CLASSES = 6
-EPOCHS = 15             # Stable epoch count optimized for training time vs. performance
+EPOCHS = 20             # Increased potential epochs
 NUM_REVIEWS = 10        
 TRAINABLE_EMBEDDING = True 
 
@@ -118,7 +118,7 @@ def build_cnn_model(num_words, embedding_matrix):
         Conv1D(filters=RNN_UNITS, kernel_size=5, activation='relu', padding='same'),
         Conv1D(filters=RNN_UNITS // 2, kernel_size=3, activation='relu', padding='same'), 
         GlobalMaxPooling1D(),
-        Dense(DENSE_UNITS, activation='relu'), # Increased dense units
+        Dense(DENSE_UNITS, activation='relu'), 
         Dropout(0.5),
         Dense(NUM_CLASSES, activation='softmax')
     ])
@@ -127,16 +127,16 @@ def build_cnn_model(num_words, embedding_matrix):
 
 def build_bilstm_model(num_words, embedding_matrix):
     """
-    Builds the stable three-layer BiLSTM model (re-instated for high-accuracy target)
-    with increased recurrent unit capacity.
+    Builds the MAXIMAL four-layer BiLSTM model for high-accuracy target.
     """
     model = Sequential([
         create_embedding_layer(num_words, embedding_matrix),
         Dropout(0.3),
-        Bidirectional(LSTM(RNN_UNITS, return_sequences=True, dropout=0.1)), # Layer 1 (Increased capacity)
+        Bidirectional(LSTM(RNN_UNITS, return_sequences=True, dropout=0.1)), # Layer 1
         Bidirectional(LSTM(RNN_UNITS, return_sequences=True, dropout=0.1)), # Layer 2
-        Bidirectional(LSTM(RNN_UNITS)),                                      # Final layer (Layer 3)
-        Dense(DENSE_UNITS, activation='relu'), # Increased dense units
+        Bidirectional(LSTM(RNN_UNITS, return_sequences=True, dropout=0.1)), # Layer 3
+        Bidirectional(LSTM(RNN_UNITS)),                                      # Final layer (Layer 4)
+        Dense(DENSE_UNITS, activation='relu'), 
         Dropout(0.5),
         Dense(NUM_CLASSES, activation='softmax')
     ])
@@ -144,12 +144,12 @@ def build_bilstm_model(num_words, embedding_matrix):
     return model
 
 def build_gru_model(num_words, embedding_matrix):
-    """Builds the Bidirectional GRU model (efficient sequence processing) with increased capacity."""
+    """Builds the Bidirectional GRU model (efficient sequence processing) with maximal capacity."""
     model = Sequential([
         create_embedding_layer(num_words, embedding_matrix),
         Dropout(0.3),
-        Bidirectional(GRU(RNN_UNITS, dropout=0.1)), # Increased capacity
-        Dense(DENSE_UNITS, activation='relu'), # Increased dense units
+        Bidirectional(GRU(RNN_UNITS, dropout=0.1)), 
+        Dense(DENSE_UNITS, activation='relu'), 
         Dropout(0.5),
         Dense(NUM_CLASSES, activation='softmax')
     ])
@@ -181,8 +181,10 @@ def load_and_train_model():
     all_texts = train_texts + test_texts
 
     # 2. Tokenization and Sequencing
+    # IMPORTANT FIX: Explicitly add the negation token to guarantee its index
     tokenizer = Tokenizer(num_words=MAX_WORDS, oov_token="<unk>")
-    tokenizer.fit_on_texts(all_texts)
+    # Fit on all text PLUS the special token to ensure it is included
+    tokenizer.fit_on_texts(all_texts + ['__NEGATED__']) 
     
     num_words = min(MAX_WORDS, len(tokenizer.word_index) + 1)
 
@@ -225,7 +227,7 @@ def load_and_train_model():
 
     early_stopping = EarlyStopping(
         monitor='val_loss', 
-        patience=3, 
+        patience=5, # Increased patience for convergence
         restore_best_weights=True, 
         verbose=0 # Run silently
     )
@@ -238,7 +240,7 @@ def load_and_train_model():
                 train_padded, 
                 train_labels_one_hot,
                 epochs=EPOCHS, 
-                batch_size=64, 
+                batch_size=128, # Increased batch size
                 validation_split=0.1,
                 class_weight=class_weights, 
                 callbacks=[early_stopping],
