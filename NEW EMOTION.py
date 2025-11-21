@@ -19,12 +19,12 @@ import re
 os.environ['TF_CPP_CPP_LOG_LEVEL'] = '3'
 import tensorflow as tf
 
-# --- Configuration (MAXIMAL STABLE BiLSTM CAPACITY) ---
+# --- Configuration (STABLE CAPACITY) ---
 MAX_WORDS = 20000       
 MAX_LEN = 150           
-EMBEDDING_DIM = 200     # Increased dramatically for representational capacity
-RNN_UNITS = 256         # Increased capacity
-DENSE_UNITS = 512       # Increased capacity
+EMBEDDING_DIM = 100     # Reduced for stability (was 200)
+RNN_UNITS = 128         # Reduced for stability (was 256)
+DENSE_UNITS = 256       # Reduced for stability (was 512)
 NUM_CLASSES = 6
 EPOCHS = 20             
 NUM_REVIEWS = 10        
