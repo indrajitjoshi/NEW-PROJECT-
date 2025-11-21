@@ -9,6 +9,7 @@ from tensorflow.keras.models import Sequential, Model
 from tensorflow.keras.layers import Embedding, Bidirectional, LSTM, Dense, Dropout, Conv1D, GlobalMaxPooling1D, GRU, Input
 from tensorflow.keras.callbacks import EarlyStopping
 from tensorflow.keras.initializers import Constant
+from tensorflow.keras.regularizers import l2 # NEW: Import L2 Regularizer
 import os
 import sys
 from collections import Counter
@@ -18,16 +19,17 @@ import re
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 import tensorflow as tf
 
-# --- Configuration (Optimized for Stability and High Accuracy) ---
+# --- Configuration (MAXIMAL Stable Capacity for 94%+ Accuracy) ---
 MAX_WORDS = 20000       
 MAX_LEN = 150           
 EMBEDDING_DIM = 128     
-RNN_UNITS = 256         # Reduced from 300 for stability
-DENSE_UNITS = 768       # Reduced from 1024 for stability
+RNN_UNITS = 300         # Maximal stable unit count
+DENSE_UNITS = 768       # Maximal stable unit count
 NUM_CLASSES = 6
-EPOCHS = 15             # Safer epoch count
+EPOCHS = 15             
 NUM_REVIEWS = 10        
 TRAINABLE_EMBEDDING = True 
+REGULARIZATION_RATE = 1e-4 # NEW: L2 Regularization rate for stability
 
 # Define the emotion labels for mapping
 emotion_labels = ['sadness', 'joy', 'love', 'anger', 'fear', 'surprise']
@@ -36,7 +38,6 @@ id_to_label = {i: label for i, label in enumerate(emotion_labels)}
 
 # Custom Samples designed for clear classification tests
 SAMPLE_REVIEWS = {
-    # Negation test case (should now be fixed)
     "sadness": "I am not happy with this purchase. It makes me feel miserable and disappointed.", 
     "joy": "This product is amazing and fills me with joy! I am absolutely ecstatic.",
     "love": "I absolutely adore the design and quality, I'm completely in love.",
@@ -50,11 +51,9 @@ SAMPLE_REVIEWS = {
 def handle_negation(texts):
     """
     Handles negation by modifying phrases and appending a global negation flag.
-    - Replaces space between a negator and the following word with an underscore.
-    - Appends __NEGATED__ token to the end of the text if negation is detected.
     """
     negation_words = ['not', 'no', 'never', "don't", "isn't", "wasn't", "wouldn't", 
-                      "couldn't", "won't", "can't', 'do not", "did not", "will not",
+                      "couldn't", "won't", "can't", 'do not', "did not", "will not",
                       'hardly', 'scarcely']
     
     processed_texts = []
@@ -63,32 +62,25 @@ def handle_negation(texts):
         did_negate = False
         words = text.split()
         
-        # 1. Look for explicit negation words ('not', 'never', etc.)
         for i, word in enumerate(words):
-            # Check for multi-word negators (e.g., 'do not')
-            if word.lower() in ['do', 'did', 'will', 'was', 'is'] and i + 1 < len(words) and words[i+1].lower() == 'not':
-                 # Treat 'do not' as one unit affecting the next word
-                 if i + 2 < len(words):
-                     # Combine the negation unit and the following word
-                     words[i+2] = f"{word}_{words[i+1]}_{words[i+2]}"
-                     words[i], words[i+1] = '', '' # Remove negators
-                     did_negate = True
             
             # Check for standard contractions or single-word negators
-            elif word.lower() in negation_words and i + 1 < len(words):
+            if word.lower() in negation_words and i + 1 < len(words):
                  # Create a specialized token (e.g., 'not_happy')
-                 words[i+1] = f"{word}_{words[i+1]}"
-                 words[i] = '' # Remove the negator itself after modifying the next word
+                 if word.lower() == 'not':
+                    words[i+1] = f"not_{words[i+1]}"
+                 else:
+                    words[i+1] = f"{word}_{words[i+1]}"
+                    
+                 words[i] = '' 
                  did_negate = True
             
             # 2. Look for prefixes (un, in, etc.)
             if re.match(r'^(un|in|im|ir)\w+', word.lower()):
                  did_negate = True
         
-        # Rejoin words and remove empty strings from explicit negation
         new_text = " ".join(filter(None, words))
         
-        # 3. Append global flag to signal negation presence
         if did_negate:
             new_text = f"{new_text} __NEGATED__"
             
@@ -111,13 +103,15 @@ def create_embedding_layer(num_words, embedding_matrix=None):
 
 
 def build_cnn_model(num_words, embedding_matrix):
-    """Builds the deep CNN model (best for local features like negation)."""
+    """Builds the deep CNN model with L2 regularization for stability."""
     model = Sequential([
         create_embedding_layer(num_words, embedding_matrix),
-        Conv1D(filters=RNN_UNITS, kernel_size=5, activation='relu', padding='same'),
-        Conv1D(filters=RNN_UNITS // 2, kernel_size=3, activation='relu', padding='same'), 
+        Conv1D(filters=RNN_UNITS, kernel_size=5, activation='relu', padding='same',
+               kernel_regularizer=l2(REGULARIZATION_RATE)),
+        Conv1D(filters=RNN_UNITS // 2, kernel_size=3, activation='relu', padding='same', 
+               kernel_regularizer=l2(REGULARIZATION_RATE)), 
         GlobalMaxPooling1D(),
-        Dense(DENSE_UNITS, activation='relu'), 
+        Dense(DENSE_UNITS, activation='relu', kernel_regularizer=l2(REGULARIZATION_RATE)), 
         Dropout(0.5),
         Dense(NUM_CLASSES, activation='softmax')
     ])
@@ -126,14 +120,15 @@ def build_cnn_model(num_words, embedding_matrix):
 
 def build_bilstm_model(num_words, embedding_matrix):
     """
-    Builds the two-layer BiLSTM model (optimized for stability and high accuracy).
+    Builds the two-layer BiLSTM model with L2 regularization for stability.
     """
     model = Sequential([
         create_embedding_layer(num_words, embedding_matrix),
         Dropout(0.3),
-        Bidirectional(LSTM(RNN_UNITS, return_sequences=True, dropout=0.1)), # Layer 1
-        Bidirectional(LSTM(RNN_UNITS)),                                      # Final layer (Layer 2)
-        Dense(DENSE_UNITS, activation='relu'), 
+        Bidirectional(LSTM(RNN_UNITS, return_sequences=True, dropout=0.1, 
+                           kernel_regularizer=l2(REGULARIZATION_RATE))), # L2 added
+        Bidirectional(LSTM(RNN_UNITS, kernel_regularizer=l2(REGULARIZATION_RATE))), # L2 added
+        Dense(DENSE_UNITS, activation='relu', kernel_regularizer=l2(REGULARIZATION_RATE)), 
         Dropout(0.5),
         Dense(NUM_CLASSES, activation='softmax')
     ])
@@ -141,12 +136,12 @@ def build_bilstm_model(num_words, embedding_matrix):
     return model
 
 def build_gru_model(num_words, embedding_matrix):
-    """Builds the Bidirectional GRU model (efficient sequence processing) with maximal capacity."""
+    """Builds the Bidirectional GRU model with L2 regularization for stability."""
     model = Sequential([
         create_embedding_layer(num_words, embedding_matrix),
         Dropout(0.3),
-        Bidirectional(GRU(RNN_UNITS, dropout=0.1)), 
-        Dense(DENSE_UNITS, activation='relu'), 
+        Bidirectional(GRU(RNN_UNITS, dropout=0.1, kernel_regularizer=l2(REGULARIZATION_RATE))), # L2 added
+        Dense(DENSE_UNITS, activation='relu', kernel_regularizer=l2(REGULARIZATION_RATE)), 
         Dropout(0.5),
         Dense(NUM_CLASSES, activation='softmax')
     ])
@@ -164,13 +159,11 @@ def load_and_train_model():
     # 1. Load Data
     data = load_dataset("dair-ai/emotion", "split")
     
-    # Combine train and validation splits for maximum data utilization
     train_texts = list(data['train']['text']) + list(data['validation']['text'])
     train_labels = list(data['train']['label']) + list(data['validation']['label'])
     test_texts = list(data['test']['text'])
     test_labels = list(data['test']['label'])
     
-    # Apply Negation Preprocessing to all data
     st.info("Applying custom negation preprocessing...")
     train_texts = handle_negation(train_texts)
     test_texts = handle_negation(test_texts)
@@ -178,7 +171,6 @@ def load_and_train_model():
     all_texts = train_texts + test_texts
 
     # 2. Tokenization and Sequencing
-    # IMPORTANT: Explicitly add the negation token to guarantee its index (Fix for "not happy" issue)
     tokenizer = Tokenizer(num_words=MAX_WORDS, oov_token="<unk>")
     tokenizer.fit_on_texts(all_texts + ['__NEGATED__']) 
     
@@ -199,14 +191,27 @@ def load_and_train_model():
     class_counts = np.bincount(train_labels)
     class_weights = {}
     for i in range(NUM_CLASSES):
-        # Calculate inverse frequency weight
         class_weights[i] = total_samples / (NUM_CLASSES * class_counts[i])
         
-    # 4. Simulated Transfer Learning Initialization (For Semantic Stability)
-    st.info("Initializing embedding matrix (Simulated Transfer Learning)...")
+    # 4. CRITICAL: Anti-Negation Embedding Initialization
+    st.info("Initializing embedding matrix with anti-negation mirror semantics...")
     embedding_matrix = np.random.uniform(-0.05, 0.05, (num_words, EMBEDDING_DIM))
     
-    # Set a unique initialization for our special tokens to force attention
+    # Perform semantic initialization (requires original words and negated forms to be indexed)
+    for word, index in tokenizer.word_index.items():
+        if index >= num_words:
+            continue
+            
+        # Check for our manually negated tokens (e.g., 'not_happy', 'never_sad')
+        if word.startswith('not_') or word.startswith('never_'):
+            original_word = word.split('_', 1)[1] 
+            original_index = tokenizer.word_index.get(original_word)
+            
+            if original_index is not None and original_index < num_words:
+                # Initialize the negated token's embedding as the inverse of the original word's embedding
+                embedding_matrix[index] = -embedding_matrix[original_index]
+            
+    # Set unique initialization for the global negation flag
     negated_index = tokenizer.word_index.get('__negated__', 0)
     if negated_index < num_words:
         embedding_matrix[negated_index] = np.random.uniform(-0.1, 0.1, EMBEDDING_DIM)
@@ -223,9 +228,9 @@ def load_and_train_model():
 
     early_stopping = EarlyStopping(
         monitor='val_loss', 
-        patience=5, # Increased patience for convergence
+        patience=5, 
         restore_best_weights=True, 
-        verbose=0 # Run silently
+        verbose=0 
     )
 
     # Train all models silently
@@ -240,7 +245,7 @@ def load_and_train_model():
                 validation_split=0.1,
                 class_weight=class_weights, 
                 callbacks=[early_stopping],
-                verbose=0 # Run silently
+                verbose=0 
             )
         except Exception as e:
             st.error(f"Error during training Model {i+1}: {e}")
@@ -305,30 +310,22 @@ def predict_emotion(ensemble_models, tokenizer, text):
 def get_recommendation_and_comment(all_emotions):
     """
     Determines the overall recommended emotion and the buy/no-buy comment.
-    Tie-breaking logic: If there's a tie for the highest count, use the emotion from the LAST review (index 9).
     """
     if not all_emotions:
         return "N/A", "Please enter at least one review for analysis.", {}
 
     emotion_counts = Counter(all_emotions)
     
-    # 1. Find the maximum count
     max_count = max(emotion_counts.values())
-    
-    # 2. Find all emotions that share the maximum count
     top_emotions = [emotion for emotion, count in emotion_counts.items() if count == max_count]
 
-    # 3. Determine the final dominant emotion (Tie-breaking: use the last review's emotion)
-    dominant_emotion = top_emotions[0] # Default choice
+    dominant_emotion = top_emotions[0] 
     
     if len(top_emotions) > 1:
         last_review_emotion = all_emotions[-1]
         if last_review_emotion in top_emotions:
             dominant_emotion = last_review_emotion
-        # If the last review emotion wasn't part of the tie, we stick to the default (alphabetically first)
 
-    # 4. Generate Comment
-    # We must consider 'Surprise' as ambiguous. Only 'Joy' and 'Love' are strong BUY signals.
     positive_buy_emotions = ['Joy', 'Love']
     
     if dominant_emotion in positive_buy_emotions:
@@ -354,59 +351,48 @@ def create_simulated_word_cloud(emotion_counts, dominant_emotion):
     """
     Creates a simulated word cloud using HTML/CSS, where text size is based on count, 
     and the dominant emotion is highlighted and proportionally larger.
-    The count is separated and styled for high visibility and clear spacing.
     """
     if not emotion_counts:
         return ""
         
-    # Normalize counts for font sizing (min size 18px, max size 48px)
     max_count = max(emotion_counts.values())
     min_count = min(emotion_counts.values())
     
-    # Handle case where all counts are the same (prevents division by zero/zero range)
     count_range = max_count - min_count
     if count_range == 0:
-        count_range = 1 # Treat all as high importance
+        count_range = 1 
 
     html_content = '<div style="display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 15px; margin-top: 30px; background: rgba(0, 0, 0, 0.4); padding: 20px; border-radius: 12px; min-height: 200px;">'
     
-    # Define a color map for visual distinction
     color_map = {
-        'Joy': '#4CAF50',       # Green
-        'Love': '#FF69B4',      # Pink
-        'Surprise': '#FFD700',  # Gold
-        'Sadness': '#2196F3',   # Blue
-        'Anger': '#F44336',     # Red
-        'Fear': '#FF9800',      # Orange
-        'N/A': '#9E9E9E'        # Grey
+        'Joy': '#4CAF50',       
+        'Love': '#FF69B4',      
+        'Surprise': '#FFD700',  
+        'Sadness': '#2196F3',   
+        'Anger': '#F44336',     
+        'Fear': '#FF9800',      
+        'N/A': '#9E9E9E'        
     }
 
-    # Prepare data for rendering
     data_to_render = [(emotion.capitalize(), count) for emotion, count in emotion_counts.items()]
     
     for emotion, count in data_to_render:
-        # Calculate font size: scale between 18px and 48px
         if count_range > 1:
             size_ratio = (count - min_count) / count_range
-            font_size = 18 + (size_ratio * 30) # Base 18px + up to 30px scaling
+            font_size = 18 + (size_ratio * 30) 
         else:
-            font_size = 36 # Default large size if counts are uniform
+            font_size = 36 
 
         
-        # Dominant emotion gets an extra boost and highlight
         if emotion == dominant_emotion:
             font_size *= 1.2
             emotion_style = f'font-size: {font_size:.0f}px; color: {color_map.get(emotion, "#FFFFFF")}; font-weight: 900; text-shadow: 0 0 10px #FFD700;'
-            # CRITICAL: Increase count visibility and ensure spacing
             count_style = f'font-size: {font_size * 0.9:.0f}px; color: #FFD700; font-weight: 900; margin-left: -5px;'
         else:
             emotion_style = f'font-size: {font_size:.0f}px; color: {color_map.get(emotion, "#FFFFFF")}; opacity: 0.8; font-weight: 700;'
-            # CRITICAL: Increase count visibility and ensure spacing
             count_style = f'font-size: {font_size * 0.8:.0f}px; color: #E0F7FA; font-weight: 700; margin-left: -5px;'
         
-        # Output emotion text and count separately for distinct styling
         html_content += f'<span style="display: inline-flex; align-items: baseline;">'
-        # Added explicit &nbsp;&nbsp; for the requested clear spacing
         html_content += f'<span style="{emotion_style}">{emotion}&nbsp;&nbsp;</span>'
         html_content += f'<span style="{count_style}">({count})</span>'
         html_content += f'</span>'
