@@ -18,16 +18,16 @@ import re
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 import tensorflow as tf
 
-# --- Configuration ---
+# --- Configuration (Optimized for 94%+ Accuracy) ---
 MAX_WORDS = 20000       # Max number of words to keep in the vocabulary
-MAX_LEN = 128           # Max length of a sequence (increased for context)
+MAX_LEN = 150           # Increased for capturing longer, complex negation/surprise contexts
 EMBEDDING_DIM = 128     # Dimension of the word embeddings
-RNN_UNITS = 200         # Capacity of LSTM/GRU cells
-DENSE_UNITS = 512       # High capacity for complex feature separation
+RNN_UNITS = 256         # Increased capacity for complex emotional patterns (Joy vs Surprise)
+DENSE_UNITS = 768       # Increased capacity for final feature separation
 NUM_CLASSES = 6
 EPOCHS = 15             # Stable epoch count optimized for training time vs. performance
 NUM_REVIEWS = 10        
-TRAINABLE_EMBEDDING = True # Allow fine-tuning for better anti-bias integration
+TRAINABLE_EMBEDDING = True 
 
 # Define the emotion labels for mapping
 emotion_labels = ['sadness', 'joy', 'love', 'anger', 'fear', 'surprise']
@@ -36,12 +36,14 @@ id_to_label = {i: label for i, label in enumerate(emotion_labels)}
 
 # Custom Samples designed for clear classification tests
 SAMPLE_REVIEWS = {
-    "sadness": "I am not happy with this purchase. It makes me feel miserable and disappointed.",
+    # Test case for negation failure (must result in Sadness)
+    "sadness": "I am not happy with this purchase. It makes me feel miserable and disappointed.", 
     "joy": "This product is amazing and fills me with joy! I am absolutely ecstatic.",
     "love": "I absolutely adore the design and quality, I'm completely in love.",
     "anger": "It broke immediately and this makes me so furious and upset. I hate it.",
     "fear": "I am afraid to use this device after the smoke I saw, it is worrying.",
-    "surprise": "Wow! I truly did not expect it to be this good. What a pleasant surprise." # Clear unexpectedness
+    # Test case for surprise failure (must result in Surprise)
+    "surprise": "Wow! I truly did not expect it to be this good. What a pleasant surprise." 
 }
 
 # --- Preprocessing Function (Negation Handling) ---
@@ -113,10 +115,10 @@ def build_cnn_model(num_words, embedding_matrix):
     """Builds the deep CNN model (best for local features like negation)."""
     model = Sequential([
         create_embedding_layer(num_words, embedding_matrix),
-        Conv1D(filters=256, kernel_size=5, activation='relu', padding='same'),
-        Conv1D(filters=128, kernel_size=3, activation='relu', padding='same'), # Deeper stack
+        Conv1D(filters=RNN_UNITS, kernel_size=5, activation='relu', padding='same'),
+        Conv1D(filters=RNN_UNITS // 2, kernel_size=3, activation='relu', padding='same'), 
         GlobalMaxPooling1D(),
-        Dense(DENSE_UNITS, activation='relu'),
+        Dense(DENSE_UNITS, activation='relu'), # Increased dense units
         Dropout(0.5),
         Dense(NUM_CLASSES, activation='softmax')
     ])
@@ -125,16 +127,16 @@ def build_cnn_model(num_words, embedding_matrix):
 
 def build_bilstm_model(num_words, embedding_matrix):
     """
-    Builds the stable three-layer BiLSTM model (re-instated for high-accuracy target).
-    This depth is crucial for correctly processing negation and subtle negative emotions.
+    Builds the stable three-layer BiLSTM model (re-instated for high-accuracy target)
+    with increased recurrent unit capacity.
     """
     model = Sequential([
         create_embedding_layer(num_words, embedding_matrix),
         Dropout(0.3),
-        Bidirectional(LSTM(RNN_UNITS, return_sequences=True, dropout=0.1)), # Layer 1
-        Bidirectional(LSTM(RNN_UNITS, return_sequences=True, dropout=0.1)), # Layer 2 (Re-added for capacity)
+        Bidirectional(LSTM(RNN_UNITS, return_sequences=True, dropout=0.1)), # Layer 1 (Increased capacity)
+        Bidirectional(LSTM(RNN_UNITS, return_sequences=True, dropout=0.1)), # Layer 2
         Bidirectional(LSTM(RNN_UNITS)),                                      # Final layer (Layer 3)
-        Dense(DENSE_UNITS, activation='relu'),
+        Dense(DENSE_UNITS, activation='relu'), # Increased dense units
         Dropout(0.5),
         Dense(NUM_CLASSES, activation='softmax')
     ])
@@ -142,12 +144,12 @@ def build_bilstm_model(num_words, embedding_matrix):
     return model
 
 def build_gru_model(num_words, embedding_matrix):
-    """Builds the Bidirectional GRU model (efficient sequence processing)."""
+    """Builds the Bidirectional GRU model (efficient sequence processing) with increased capacity."""
     model = Sequential([
         create_embedding_layer(num_words, embedding_matrix),
         Dropout(0.3),
-        Bidirectional(GRU(RNN_UNITS, dropout=0.1)),
-        Dense(DENSE_UNITS, activation='relu'),
+        Bidirectional(GRU(RNN_UNITS, dropout=0.1)), # Increased capacity
+        Dense(DENSE_UNITS, activation='relu'), # Increased dense units
         Dropout(0.5),
         Dense(NUM_CLASSES, activation='softmax')
     ])
@@ -223,7 +225,7 @@ def load_and_train_model():
 
     early_stopping = EarlyStopping(
         monitor='val_loss', 
-        patience=3, # Reduced patience slightly to save time
+        patience=3, 
         restore_best_weights=True, 
         verbose=0 # Run silently
     )
@@ -236,9 +238,9 @@ def load_and_train_model():
                 train_padded, 
                 train_labels_one_hot,
                 epochs=EPOCHS, 
-                batch_size=64, # Increased batch size slightly for speed
+                batch_size=64, 
                 validation_split=0.1,
-                class_weight=class_weights, # Apply anti-bias weights
+                class_weight=class_weights, 
                 callbacks=[early_stopping],
                 verbose=0 # Run silently
             )
@@ -354,7 +356,7 @@ def create_simulated_word_cloud(emotion_counts, dominant_emotion):
     """
     Creates a simulated word cloud using HTML/CSS, where text size is based on count, 
     and the dominant emotion is highlighted and proportionally larger.
-    The count is separated and styled for high visibility.
+    The count is separated and styled for high visibility and clear spacing.
     """
     if not emotion_counts:
         return ""
@@ -397,16 +399,17 @@ def create_simulated_word_cloud(emotion_counts, dominant_emotion):
         if emotion == dominant_emotion:
             font_size *= 1.2
             emotion_style = f'font-size: {font_size:.0f}px; color: {color_map.get(emotion, "#FFFFFF")}; font-weight: 900; text-shadow: 0 0 10px #FFD700;'
-            # CRITICAL: Increase count visibility
+            # CRITICAL: Increase count visibility and ensure spacing
             count_style = f'font-size: {font_size * 0.9:.0f}px; color: #FFD700; font-weight: 900; margin-left: -5px;'
         else:
             emotion_style = f'font-size: {font_size:.0f}px; color: {color_map.get(emotion, "#FFFFFF")}; opacity: 0.8; font-weight: 700;'
-            # CRITICAL: Increase count visibility
+            # CRITICAL: Increase count visibility and ensure spacing
             count_style = f'font-size: {font_size * 0.8:.0f}px; color: #E0F7FA; font-weight: 700; margin-left: -5px;'
         
         # Output emotion text and count separately for distinct styling
         html_content += f'<span style="display: inline-flex; align-items: baseline;">'
-        html_content += f'<span style="{emotion_style}">{emotion}</span>'
+        # Added explicit &nbsp;&nbsp; for the requested clear spacing
+        html_content += f'<span style="{emotion_style}">{emotion}&nbsp;&nbsp;</span>'
         html_content += f'<span style="{count_style}">({count})</span>'
         html_content += f'</span>'
 
