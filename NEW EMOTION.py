@@ -149,6 +149,8 @@ def build_gated_ensemble_model(num_words, embedding_matrix):
     output_layer = Dense(NUM_CLASSES, activation='softmax')(merged)
     
     model = Model(inputs=input_layer, outputs=output_layer)
+    # The loss function remains categorical_crossentropy, but the learning stabilization 
+    # and initialization focus the training effort on problematic classes.
     model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
     return model
 
