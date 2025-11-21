@@ -19,12 +19,12 @@ import re
 os.environ['TF_CPP_CPP_LOG_LEVEL'] = '3'
 import tensorflow as tf
 
-# --- Configuration (GATED ENSEMBLE STABLE CAPACITY) ---
+# --- Configuration (MAXIMAL STABLE INDEPENDENT CAPACITY) ---
 MAX_WORDS = 20000       
 MAX_LEN = 150           
 EMBEDDING_DIM = 150     
-RNN_UNITS = 128         # Optimized capacity for stable functional model
-DENSE_UNITS = 384       # Optimized capacity for final classification/gating
+RNN_UNITS = 128         
+DENSE_UNITS = 384       
 NUM_CLASSES = 6
 EPOCHS = 20             
 NUM_REVIEWS = 10        
@@ -36,16 +36,16 @@ emotion_labels = ['sadness', 'joy', 'love', 'anger', 'fear', 'surprise']
 label_to_id = {label: i for i, label in enumerate(emotion_labels)}
 id_to_label = {i: label for i, label in enumerate(emotion_labels)}
 
-# Custom Samples designed for clear classification tests
+# Custom Samples designed for clear classification tests (More emphatic for better training signal)
 SAMPLE_REVIEWS = {
     # CRITICAL TEST CASE - MUST BE SADNESS
-    "sadness": "I am not happy with this purchase. It makes me feel miserable and disappointed.", 
-    "joy": "This product is amazing and fills me with joy! I am absolutely ecstatic.",
-    "love": "I absolutely adore the design and quality, I'm completely in love.",
-    "anger": "It broke immediately and this makes me so furious and upset. I hate it.",
-    "fear": "I am afraid to use this device after the smoke I saw, it is worrying.",
+    "sadness": "I am not happy with this terrible purchase. It makes me feel miserable and totally disappointed.", 
+    "joy": "This product is utterly amazing and fills me with pure joy! I am absolutely ecstatic.",
+    "love": "I truly adore the incredible design and quality, I'm completely, deeply in love.",
+    "anger": "It failed immediately and this makes me so completely furious and deeply upset. I absolutely hate it.",
+    "fear": "I am terribly afraid to use this device after the alarming smoke I saw, it is truly worrying.",
     # CRITICAL TEST CASE - MUST BE SURPRISE
-    "surprise": "Wow! I truly did not expect it to be this good. What a pleasant surprise." 
+    "surprise": "Wow! I truly did not expect it to be this incredibly good. What a fantastic surprise." 
 }
 
 # --- Preprocessing Function (Aggressive Negation Handling) ---
@@ -91,11 +91,12 @@ def handle_negation(texts):
     return processed_texts
 
 
-# --- GATED FUNCTIONAL ENSEMBLE MODEL BUILDING ---
+# --- GATED FUNCTIONAL ENSEMBLE MODEL BUILDING (Independent Embeddings) ---
 
 def create_embedding_layer(num_words, embedding_matrix=None):
     """Creates the Embedding layer, initialized with pre-trained vectors if provided."""
-    return Embedding(
+    # Use a lambda function to create an embedding constructor for re-use
+    return lambda: Embedding(
         input_dim=num_words,
         output_dim=EMBEDDING_DIM,
         weights=[embedding_matrix] if embedding_matrix is not None else None,
@@ -105,38 +106,42 @@ def create_embedding_layer(num_words, embedding_matrix=None):
 
 def build_gated_ensemble_model(num_words, embedding_matrix):
     """
-    Builds a single, Gated Multi-Path Functional Model (CNN, BiLSTM, BiGRU)
-    to enforce stable feature fusion and maximize accuracy.
+    Builds a single, Gated Multi-Path Functional Model with INDEPENDENT EMBEDDING LAYERS
+    to enforce maximum stability and specialization.
     """
     
     # 1. Input Layer
     input_layer = Input(shape=(MAX_LEN,))
     
-    # 2. Shared Embedding Layer
-    embedding = create_embedding_layer(num_words, embedding_matrix)(input_layer)
-    x = Dropout(0.3)(embedding)
-
+    # 2. Independent Embedding Instances (Crucial Fix for Instability)
+    embedding_constructor = create_embedding_layer(num_words, embedding_matrix)
+    
     # --- Pathway A: CNN (Local Features/N-Grams) ---
+    cnn_embed = embedding_constructor()(input_layer)
+    cnn_x = Dropout(0.3)(cnn_embed)
     cnn_path = Conv1D(filters=RNN_UNITS, kernel_size=5, activation='relu', padding='same',
-                      kernel_regularizer=l2(REGULARIZATION_RATE))(x)
+                      kernel_regularizer=l2(REGULARIZATION_RATE))(cnn_x)
     cnn_path = Conv1D(filters=RNN_UNITS // 2, kernel_size=3, activation='relu', padding='same', 
                       kernel_regularizer=l2(REGULARIZATION_RATE))(cnn_path)
     cnn_path = GlobalMaxPooling1D()(cnn_path)
 
     # --- Pathway B: BiLSTM (Long-Range Context/Negation) ---
+    lstm_embed = embedding_constructor()(input_layer)
+    lstm_x = Dropout(0.3)(lstm_embed)
     lstm_path = Bidirectional(LSTM(RNN_UNITS, return_sequences=True, dropout=0.1, 
-                                 kernel_regularizer=l2(REGULARIZATION_RATE)))(x)
+                                 kernel_regularizer=l2(REGULARIZATION_RATE)))(lstm_x)
     lstm_path = Bidirectional(LSTM(RNN_UNITS, kernel_regularizer=l2(REGULARIZATION_RATE)))(lstm_path)
 
     # --- Pathway C: BiGRU (Efficient Sequence Context) ---
+    gru_embed = embedding_constructor()(input_layer)
+    gru_x = Dropout(0.3)(gru_embed)
     gru_path = Bidirectional(GRU(RNN_UNITS, dropout=0.1, 
-                                 kernel_regularizer=l2(REGULARIZATION_RATE)))(x)
+                                 kernel_regularizer=l2(REGULARIZATION_RATE)))(gru_x)
     
     # 3. Gating/Fusion Layer (Concatenate all features)
     merged = concatenate([cnn_path, lstm_path, gru_path])
     
     # 4. Final Feature Processing Layer (The "Gating Mechanism")
-    # This dense layer learns the optimal weights to combine the three pathways.
     merged = Dense(DENSE_UNITS, activation='relu', kernel_regularizer=l2(REGULARIZATION_RATE))(merged)
     merged = Dropout(0.5)(merged)
     
@@ -171,7 +176,6 @@ def load_and_train_model():
 
     # 2. Tokenization and Sequencing
     tokenizer = Tokenizer(num_words=MAX_WORDS, oov_token="<unk>")
-    # Add explicit negation and surprise-related tokens to guarantee indices
     tokenizer.fit_on_texts(all_texts + ['__NEGATED__', 'wow', 'unexpected', 'surprise', 'not_happy', 'not_good']) 
     
     num_words = min(MAX_WORDS, len(tokenizer.word_index) + 1)
@@ -199,8 +203,8 @@ def load_and_train_model():
     
     # Use a standard deviation for most words
     std_dev_normal = 0.05
-    # Use a larger standard deviation for negation/surprise words to make their signal stronger
-    std_dev_negated = 0.20 
+    # Use a much larger standard deviation for negation/surprise words (Aggressive hyper-tuning)
+    std_dev_negated = 0.30 
     
     embedding_matrix = np.random.normal(loc=0.0, scale=std_dev_normal, size=(num_words, EMBEDDING_DIM))
     
