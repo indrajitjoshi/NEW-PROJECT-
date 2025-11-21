@@ -23,10 +23,10 @@ import tensorflow as tf
 MAX_WORDS = 20000       
 MAX_LEN = 150           
 EMBEDDING_DIM = 128     
-RNN_UNITS = 128         # REDUCED for Stability
-DENSE_UNITS = 256       # REDUCED for Stability
+RNN_UNITS = 128         # Optimized for Stability
+DENSE_UNITS = 256       # Optimized for Stability
 NUM_CLASSES = 6
-EPOCHS = 20             # Increased to compensate for size reduction
+EPOCHS = 20             
 NUM_REVIEWS = 10        
 TRAINABLE_EMBEDDING = True 
 REGULARIZATION_RATE = 1e-4 
@@ -67,7 +67,7 @@ def handle_negation(texts):
             # Check for standard contractions or single-word negators
             if word.lower() in negation_words and i + 1 < len(words):
                  # Create a specialized token (e.g., 'not_happy')
-                 if word.lower() == 'not':
+                 if word.lower() in ['not', 'no']: # Primary negators that apply inversion
                     words[i+1] = f"not_{words[i+1]}"
                  else:
                     words[i+1] = f"{word}_{words[i+1]}"
@@ -193,10 +193,15 @@ def load_and_train_model():
     for i in range(NUM_CLASSES):
         class_weights[i] = total_samples / (NUM_CLASSES * class_counts[i])
         
-    # 4. CRITICAL: Anti-Negation Embedding Initialization
-    st.info("Initializing embedding matrix with anti-negation mirror semantics...")
+    # 4. CRITICAL: Anti-Negation Embedding Initialization with Hyper-initialization
+    st.info("Initializing embedding matrix with hyper-initialized anti-negation mirror semantics...")
     
-    embedding_matrix = np.random.uniform(-0.05, 0.05, (num_words, EMBEDDING_DIM))
+    # Use a standard deviation for most words
+    std_dev_normal = 0.05
+    # Use a larger standard deviation for negation-related words to make their signal stronger
+    std_dev_negated = 0.15 
+    
+    embedding_matrix = np.random.normal(loc=0.0, scale=std_dev_normal, size=(num_words, EMBEDDING_DIM))
     
     # Perform semantic initialization (requires original words and negated forms to be indexed)
     for word, index in tokenizer.word_index.items():
@@ -205,17 +210,23 @@ def load_and_train_model():
             
         # Check for our manually negated tokens (e.g., 'not_happy', 'never_sad')
         if word.startswith('not_') or word.startswith('never_'):
-            original_word = word.split('_', 1)[1] 
-            original_index = tokenizer.word_index.get(original_word)
+            # Hyper-initialize the negated token
+            embedding_matrix[index] = np.random.normal(loc=0.0, scale=std_dev_negated, size=(EMBEDDING_DIM,))
             
-            if original_index is not None and original_index < num_words:
-                # Initialize the negated token's embedding as the inverse of the original word's embedding
-                embedding_matrix[index] = -embedding_matrix[original_index]
+            # Apply anti-negation mirror logic
+            if word.startswith('not_'):
+                # Try to get the index of the original word ('happy' from 'not_happy')
+                original_word = word.split('_', 1)[1] 
+                original_index = tokenizer.word_index.get(original_word)
+                
+                if original_index is not None and original_index < num_words:
+                    # Overwrite the hyper-initialized negated token's embedding as the inverse of the original word's embedding
+                    embedding_matrix[index] = -embedding_matrix[original_index]
             
     # Set unique initialization for the global negation flag
     negated_index = tokenizer.word_index.get('__negated__', 0)
     if negated_index < num_words:
-        embedding_matrix[negated_index] = np.random.uniform(-0.1, 0.1, EMBEDDING_DIM)
+        embedding_matrix[negated_index] = np.random.normal(loc=0.0, scale=std_dev_negated, size=(EMBEDDING_DIM,))
 
 
     # 5. Build and Train Ensemble Models
