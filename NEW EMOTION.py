@@ -18,14 +18,14 @@ import re
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 import tensorflow as tf
 
-# --- Configuration (MAXIMAL Capacity for 94%+ Accuracy) ---
+# --- Configuration (Optimized for Stability and High Accuracy) ---
 MAX_WORDS = 20000       
 MAX_LEN = 150           
 EMBEDDING_DIM = 128     
-RNN_UNITS = 300         # MAXIMAL CAPACITY
-DENSE_UNITS = 1024      # MAXIMAL CAPACITY
+RNN_UNITS = 256         # Reduced from 300 for stability
+DENSE_UNITS = 768       # Reduced from 1024 for stability
 NUM_CLASSES = 6
-EPOCHS = 20             # Increased potential epochs
+EPOCHS = 15             # Safer epoch count
 NUM_REVIEWS = 10        
 TRAINABLE_EMBEDDING = True 
 
@@ -36,13 +36,12 @@ id_to_label = {i: label for i, label in enumerate(emotion_labels)}
 
 # Custom Samples designed for clear classification tests
 SAMPLE_REVIEWS = {
-    # Test case for negation failure (must result in Sadness)
+    # Negation test case (should now be fixed)
     "sadness": "I am not happy with this purchase. It makes me feel miserable and disappointed.", 
     "joy": "This product is amazing and fills me with joy! I am absolutely ecstatic.",
     "love": "I absolutely adore the design and quality, I'm completely in love.",
     "anger": "It broke immediately and this makes me so furious and upset. I hate it.",
     "fear": "I am afraid to use this device after the smoke I saw, it is worrying.",
-    # Test case for surprise failure (must result in Surprise)
     "surprise": "Wow! I truly did not expect it to be this good. What a pleasant surprise." 
 }
 
@@ -127,15 +126,13 @@ def build_cnn_model(num_words, embedding_matrix):
 
 def build_bilstm_model(num_words, embedding_matrix):
     """
-    Builds the MAXIMAL four-layer BiLSTM model for high-accuracy target.
+    Builds the two-layer BiLSTM model (optimized for stability and high accuracy).
     """
     model = Sequential([
         create_embedding_layer(num_words, embedding_matrix),
         Dropout(0.3),
         Bidirectional(LSTM(RNN_UNITS, return_sequences=True, dropout=0.1)), # Layer 1
-        Bidirectional(LSTM(RNN_UNITS, return_sequences=True, dropout=0.1)), # Layer 2
-        Bidirectional(LSTM(RNN_UNITS, return_sequences=True, dropout=0.1)), # Layer 3
-        Bidirectional(LSTM(RNN_UNITS)),                                      # Final layer (Layer 4)
+        Bidirectional(LSTM(RNN_UNITS)),                                      # Final layer (Layer 2)
         Dense(DENSE_UNITS, activation='relu'), 
         Dropout(0.5),
         Dense(NUM_CLASSES, activation='softmax')
@@ -181,9 +178,8 @@ def load_and_train_model():
     all_texts = train_texts + test_texts
 
     # 2. Tokenization and Sequencing
-    # IMPORTANT FIX: Explicitly add the negation token to guarantee its index
+    # IMPORTANT: Explicitly add the negation token to guarantee its index (Fix for "not happy" issue)
     tokenizer = Tokenizer(num_words=MAX_WORDS, oov_token="<unk>")
-    # Fit on all text PLUS the special token to ensure it is included
     tokenizer.fit_on_texts(all_texts + ['__NEGATED__']) 
     
     num_words = min(MAX_WORDS, len(tokenizer.word_index) + 1)
@@ -240,7 +236,7 @@ def load_and_train_model():
                 train_padded, 
                 train_labels_one_hot,
                 epochs=EPOCHS, 
-                batch_size=128, # Increased batch size
+                batch_size=128, 
                 validation_split=0.1,
                 class_weight=class_weights, 
                 callbacks=[early_stopping],
