@@ -9,27 +9,27 @@ from tensorflow.keras.models import Sequential, Model
 from tensorflow.keras.layers import Embedding, Bidirectional, LSTM, Dense, Dropout, Conv1D, GlobalMaxPooling1D, GRU, Input
 from tensorflow.keras.callbacks import EarlyStopping
 from tensorflow.keras.initializers import Constant
-from tensorflow.keras.regularizers import l2 # NEW: Import L2 Regularizer
+from tensorflow.keras.regularizers import l2 
 import os
 import sys
 from collections import Counter
 import re
 
 # Suppress TensorFlow logging messages and warnings
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+os.environ['TF_CPP_CPP_LOG_LEVEL'] = '3'
 import tensorflow as tf
 
-# --- Configuration (MAXIMAL Stable Capacity for 94%+ Accuracy) ---
+# --- Configuration (OPTIMIZED FOR STABILITY AND HIGH-QUALITY SEMANTICS) ---
 MAX_WORDS = 20000       
 MAX_LEN = 150           
 EMBEDDING_DIM = 128     
-RNN_UNITS = 300         # Maximal stable unit count
-DENSE_UNITS = 768       # Maximal stable unit count
+RNN_UNITS = 128         # REDUCED for Stability
+DENSE_UNITS = 256       # REDUCED for Stability
 NUM_CLASSES = 6
-EPOCHS = 15             
+EPOCHS = 20             # Increased to compensate for size reduction
 NUM_REVIEWS = 10        
 TRAINABLE_EMBEDDING = True 
-REGULARIZATION_RATE = 1e-4 # NEW: L2 Regularization rate for stability
+REGULARIZATION_RATE = 1e-4 
 
 # Define the emotion labels for mapping
 emotion_labels = ['sadness', 'joy', 'love', 'anger', 'fear', 'surprise']
@@ -126,8 +126,8 @@ def build_bilstm_model(num_words, embedding_matrix):
         create_embedding_layer(num_words, embedding_matrix),
         Dropout(0.3),
         Bidirectional(LSTM(RNN_UNITS, return_sequences=True, dropout=0.1, 
-                           kernel_regularizer=l2(REGULARIZATION_RATE))), # L2 added
-        Bidirectional(LSTM(RNN_UNITS, kernel_regularizer=l2(REGULARIZATION_RATE))), # L2 added
+                           kernel_regularizer=l2(REGULARIZATION_RATE))), 
+        Bidirectional(LSTM(RNN_UNITS, kernel_regularizer=l2(REGULARIZATION_RATE))), 
         Dense(DENSE_UNITS, activation='relu', kernel_regularizer=l2(REGULARIZATION_RATE)), 
         Dropout(0.5),
         Dense(NUM_CLASSES, activation='softmax')
@@ -140,7 +140,7 @@ def build_gru_model(num_words, embedding_matrix):
     model = Sequential([
         create_embedding_layer(num_words, embedding_matrix),
         Dropout(0.3),
-        Bidirectional(GRU(RNN_UNITS, dropout=0.1, kernel_regularizer=l2(REGULARIZATION_RATE))), # L2 added
+        Bidirectional(GRU(RNN_UNITS, dropout=0.1, kernel_regularizer=l2(REGULARIZATION_RATE))), 
         Dense(DENSE_UNITS, activation='relu', kernel_regularizer=l2(REGULARIZATION_RATE)), 
         Dropout(0.5),
         Dense(NUM_CLASSES, activation='softmax')
@@ -195,6 +195,7 @@ def load_and_train_model():
         
     # 4. CRITICAL: Anti-Negation Embedding Initialization
     st.info("Initializing embedding matrix with anti-negation mirror semantics...")
+    
     embedding_matrix = np.random.uniform(-0.05, 0.05, (num_words, EMBEDDING_DIM))
     
     # Perform semantic initialization (requires original words and negated forms to be indexed)
