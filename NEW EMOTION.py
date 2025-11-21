@@ -24,7 +24,7 @@ EMBEDDING_DIM = 128     # Dimension of the word embeddings
 RNN_UNITS = 200         # Capacity of LSTM/GRU cells
 DENSE_UNITS = 512       # High capacity for complex feature separation
 NUM_CLASSES = 6
-EPOCHS = 15             # Increased epochs for stable convergence toward 94% target
+EPOCHS = 20             # Increased epochs for stable convergence toward 95% target
 NUM_REVIEWS = 10        
 TRAINABLE_EMBEDDING = True # Allow fine-tuning for better anti-bias integration
 
@@ -123,12 +123,16 @@ def build_cnn_model(num_words, embedding_matrix):
     return model
 
 def build_bilstm_model(num_words, embedding_matrix):
-    """Builds the stable two-layer BiLSTM model (best for long-range context)."""
+    """
+    Builds the stable three-layer BiLSTM model (enhanced for long-range context 
+    and higher accuracy, specifically targeting complex negative sentiment).
+    """
     model = Sequential([
         create_embedding_layer(num_words, embedding_matrix),
         Dropout(0.3),
-        Bidirectional(LSTM(RNN_UNITS, return_sequences=True, dropout=0.1)), # Stable Recurrent Dropout
-        Bidirectional(LSTM(RNN_UNITS)),                                      # Final layer
+        Bidirectional(LSTM(RNN_UNITS, return_sequences=True, dropout=0.1)), # Layer 1
+        Bidirectional(LSTM(RNN_UNITS, return_sequences=True, dropout=0.1)), # Layer 2 (Added for depth)
+        Bidirectional(LSTM(RNN_UNITS)),                                      # Final layer (Layer 3)
         Dense(DENSE_UNITS, activation='relu'),
         Dropout(0.5),
         Dense(NUM_CLASSES, activation='softmax')
@@ -353,11 +357,12 @@ def create_simulated_word_cloud(emotion_counts, dominant_emotion):
     """
     Creates a simulated word cloud using HTML/CSS, where text size is based on count, 
     and the dominant emotion is highlighted and proportionally larger.
+    The count is separated and styled for high visibility.
     """
     if not emotion_counts:
         return ""
         
-    # Normalize counts for font sizing (min size 12px, max size 48px)
+    # Normalize counts for font sizing (min size 18px, max size 48px)
     max_count = max(emotion_counts.values())
     min_count = min(emotion_counts.values())
     
@@ -390,16 +395,22 @@ def create_simulated_word_cloud(emotion_counts, dominant_emotion):
         else:
             font_size = 36 # Default large size if counts are uniform
 
-        font_weight = 700 if emotion == dominant_emotion else 400
         
         # Dominant emotion gets an extra boost and highlight
         if emotion == dominant_emotion:
             font_size *= 1.2
-            style = f'font-size: {font_size:.0f}px; color: {color_map.get(emotion, "#FFFFFF")}; font-weight: 900; transform: scale(1.05); text-shadow: 0 0 10px #FFD700;'
+            emotion_style = f'font-size: {font_size:.0f}px; color: {color_map.get(emotion, "#FFFFFF")}; font-weight: 900; text-shadow: 0 0 10px #FFD700;'
+            count_style = f'font-size: {font_size * 0.7:.0f}px; color: #FFD700; font-weight: 900; margin-left: -5px;'
         else:
-            style = f'font-size: {font_size:.0f}px; color: {color_map.get(emotion, "#FFFFFF")}; opacity: 0.8; font-weight: {font_weight};'
+            emotion_style = f'font-size: {font_size:.0f}px; color: {color_map.get(emotion, "#FFFFFF")}; opacity: 0.8; font-weight: 700;'
+            count_style = f'font-size: {font_size * 0.7:.0f}px; color: #A8A8A8; font-weight: 700; margin-left: -5px;'
         
-        html_content += f'<span style="{style}">{emotion} ({count})</span>'
+        # Output emotion text and count separately for distinct styling
+        html_content += f'<span style="display: inline-flex; align-items: baseline;">'
+        html_content += f'<span style="{emotion_style}">{emotion}</span>'
+        html_content += f'<span style="{count_style}">({count})</span>'
+        html_content += f'</span>'
+
 
     html_content += '</div>'
     return html_content
@@ -452,10 +463,6 @@ def main():
         .stButton>button:hover {
             transform: translateY(-2px); box-shadow: 0 8px 16px rgba(0, 0, 0, 0.6); background-color: #7b1296;
         }
-        .stTable tbody tr th, .stTable tbody tr td {
-            color: #FFFFFF !important; background-color: rgba(0, 0, 0, 0.5) !important;
-            border-bottom: 1px solid #3d0a52; word-break: normal; white-space: normal;
-        }
         .stTextInput input, .stTextArea textarea {
             background-color: rgba(0, 0, 0, 0.3) !important; color: white !important;
             border: 1px solid #7b1296;
@@ -488,12 +495,28 @@ def main():
             color: #FFD700; 
             font-weight: 900;
         }
+        
+        /* --- HIGH-CONTRAST TABLE STYLING --- */
+        .stTable thead th {
+             color: #FFD700 !important; /* Gold header text */
+             background-color: #5b1076 !important; /* Purple header background */
+             font-weight: 800;
+        }
+        .stTable tbody tr th, .stTable tbody tr td {
+            color: #E0F7FA !important; /* Lighter text color for contrast */
+            background-color: rgba(61, 10, 82, 0.7) !important; /* Darker, contrasting purple background */
+            border-bottom: 1px solid #FFD700;
+            word-break: normal; white-space: normal;
+            font-weight: 600; 
+        }
+        /* --- END HIGH-CONTRAST TABLE STYLING --- */
         </style>
         """,
         unsafe_allow_html=True
     )
 
-    st.markdown('<div class="header"><h1><span style="color: #FFD700;">🛍️</span> Affectlytics: Product Sentiment Analyzer <span style="color: #FFD700;">📊</span></h1></div>', unsafe_allow_html=True)
+    # UPDATED APP NAME
+    st.markdown('<div class="header"><h1><span style="color: #FFD700;">🛍️</span> Affectlytics: Product Emotion Analyzer <span style="color: #FFD700;">📊</span></h1></div>', unsafe_allow_html=True)
     
     # Load and train the model (cached)
     try:
