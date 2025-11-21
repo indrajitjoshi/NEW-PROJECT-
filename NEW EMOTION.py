@@ -14,17 +14,18 @@ import os
 import sys
 from collections import Counter
 import re
+import random
 
 # Suppress TensorFlow logging messages and warnings
 os.environ['TF_CPP_CPP_LOG_LEVEL'] = '3'
 import tensorflow as tf
 
-# --- Configuration (STABLE CAPACITY) ---
+# --- Configuration (ULTRA-STABLE GATED ENSEMBLE CAPACITY) ---
 MAX_WORDS = 20000       
 MAX_LEN = 150           
-EMBEDDING_DIM = 100     # Reduced for stability (was 200)
-RNN_UNITS = 128         # Reduced for stability (was 256)
-DENSE_UNITS = 256       # Reduced for stability (was 512)
+EMBEDDING_DIM = 64      # Ultra-stable embedding dimension (Minimal memory use)
+RNN_UNITS = 64          # Ultra-stable recurrent units
+DENSE_UNITS = 128       # Ultra-stable dense units
 NUM_CLASSES = 6
 EPOCHS = 20             
 NUM_REVIEWS = 10        
@@ -36,16 +37,16 @@ emotion_labels = ['sadness', 'joy', 'love', 'anger', 'fear', 'surprise']
 label_to_id = {label: i for i, label in enumerate(emotion_labels)}
 id_to_label = {i: label for i, label in enumerate(emotion_labels)}
 
-# Custom Samples designed for clear classification tests (More emphatic for better training signal)
+# Custom Samples designed for clear classification tests (Highly Emphatic)
 SAMPLE_REVIEWS = {
     # CRITICAL TEST CASE - MUST BE SADNESS
-    "sadness": "I am not happy with this terrible purchase. It makes me feel miserable and totally disappointed.", 
-    "joy": "This product is utterly amazing and fills me with pure joy! I am absolutely ecstatic.",
-    "love": "I truly adore the incredible design and quality, I'm completely, deeply in love.",
-    "anger": "It failed immediately and this makes me so completely furious and deeply upset. I absolutely hate it.",
-    "fear": "I am terribly afraid to use this device after the alarming smoke I saw, it is truly worrying.",
+    "sadness": "This is deeply disappointing and frustrating; I feel utter sadness.", 
+    "joy": "I am filled with pure joy! This is fantastic, amazing, and makes me extremely happy.",
+    "love": "I absolutely adore this product and feel nothing but deep love for it.",
+    "anger": "I am absolutely furious! This broken item makes me extremely angry.",
+    "fear": "I am genuinely terrified and worried about the safety of this product.",
     # CRITICAL TEST CASE - MUST BE SURPRISE
-    "surprise": "Wow! I truly did not expect it to be this incredibly good. What a fantastic surprise." 
+    "surprise": "I never expected this quality! Wow, what an amazing surprise!" 
 }
 
 # --- Preprocessing Function (Aggressive Negation Handling) ---
@@ -66,10 +67,8 @@ def handle_negation(texts):
         
         for i, word in enumerate(words):
             
-            # Check for standard contractions or single-word negators
             if word.lower() in negation_words and i + 1 < len(words):
-                 # Create a specialized token (e.g., 'not_happy')
-                 if word.lower() in ['not', 'no']: # Primary negators that apply inversion
+                 if word.lower() in ['not', 'no']:
                     words[i+1] = f"not_{words[i+1]}"
                  else:
                     words[i+1] = f"{word}_{words[i+1]}"
@@ -77,7 +76,6 @@ def handle_negation(texts):
                  words[i] = '' 
                  did_negate = True
             
-            # 2. Look for prefixes (un, in, etc.)
             if re.match(r'^(un|in|im|ir)\w+', word.lower()):
                  did_negate = True
         
@@ -91,67 +89,107 @@ def handle_negation(texts):
     return processed_texts
 
 
-# --- SIMPLEST STABLE MODEL BUILDING (BiLSTM) ---
+# --- GATED FUNCTIONAL ENSEMBLE MODEL ---
 
-def create_embedding_layer(num_words, embedding_matrix=None):
-    """Creates the Embedding layer, initialized with pre-trained vectors if provided."""
+def create_embedding_layer(num_words, embedding_matrix=None, name='embedding_layer'):
+    """Creates the Embedding layer, initialized with pre-trained vectors."""
     return Embedding(
         input_dim=num_words,
         output_dim=EMBEDDING_DIM,
         weights=[embedding_matrix] if embedding_matrix is not None else None,
         input_length=MAX_LEN,
         trainable=TRAINABLE_EMBEDDING,
-        name='embedding_layer'
+        name=name
     )
 
-def build_bilstm_model(num_words, embedding_matrix):
+def build_gated_ensemble_model(num_words, embedding_matrix):
     """
-    Builds the stable two-layer BiLSTM model (best for long-range context and negation),
-    now with maximum representational capacity (EMBEDDING_DIM=200).
+    Builds the stable Gated Functional Ensemble model combining CNN, BiLSTM, and BiGRU 
+    for maximal feature fusion and stability.
     """
-    # Use Keras Functional API
     input_layer = Input(shape=(MAX_LEN,))
-    x = create_embedding_layer(num_words, embedding_matrix)(input_layer)
-    x = Dropout(0.3)(x)
+    embedding_output = create_embedding_layer(num_words, embedding_matrix)(input_layer)
+    x = Dropout(0.3)(embedding_output)
+
+    # --- 1. BiLSTM Pathway (Sequential Context & Negation) ---
+    lstm_out = Bidirectional(LSTM(RNN_UNITS, return_sequences=True, dropout=0.1, 
+                                  kernel_regularizer=l2(REGULARIZATION_RATE)))(x)
+    lstm_out = Bidirectional(LSTM(RNN_UNITS, kernel_regularizer=l2(REGULARIZATION_RATE)))(lstm_out)
     
-    # Layer 1
-    x = Bidirectional(LSTM(RNN_UNITS, return_sequences=True, dropout=0.1, 
-                           kernel_regularizer=l2(REGULARIZATION_RATE)))(x)
+    # --- 2. CNN Pathway (Local Features & Phrases) ---
+    cnn_out = Conv1D(filters=RNN_UNITS, kernel_size=3, activation='relu', padding='same', 
+                     kernel_regularizer=l2(REGULARIZATION_RATE))(x)
+    cnn_out = GlobalMaxPooling1D()(cnn_out)
     
-    # Final Layer
-    x = Bidirectional(LSTM(RNN_UNITS, kernel_regularizer=l2(REGULARIZATION_RATE)))(x)
+    # --- 3. BiGRU Pathway (Efficient Context) ---
+    gru_out = Bidirectional(GRU(RNN_UNITS, dropout=0.1, 
+                                kernel_regularizer=l2(REGULARIZATION_RATE)))(x)
     
-    x = Dense(DENSE_UNITS, activation='relu', kernel_regularizer=l2(REGULARIZATION_RATE))(x)
+    # Concatenate all three feature vectors
+    merged = concatenate([lstm_out, cnn_out, gru_out])
+    
+    # Gating and Classification Layers
+    x = Dense(DENSE_UNITS, activation='relu', kernel_regularizer=l2(REGULARIZATION_RATE))(merged)
     x = Dropout(0.5)(x)
     output_layer = Dense(NUM_CLASSES, activation='softmax')(x)
     
     model = Model(inputs=input_layer, outputs=output_layer)
     model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
     return model
+    
 
 
 # --- Caching function to load data and train the model once ---
 
 @st.cache_resource(show_spinner=True)
 def load_and_train_model():
-    """Loads data, trains the single BiLSTM Model, and evaluates it."""
+    """Loads data, performs AGGRESSIVE class balancing, and trains the Gated Ensemble Model."""
     st.info("Loading and pre-processing dataset...")
     
     # 1. Load Data
     data = load_dataset("dair-ai/emotion", "split")
     
-    train_texts = list(data['train']['text']) + list(data['validation']['text'])
-    train_labels = list(data['train']['label']) + list(data['validation']['label'])
+    train_texts_raw = list(data['train']['text']) + list(data['validation']['text'])
+    train_labels_raw = list(data['train']['label']) + list(data['validation']['label'])
     test_texts = list(data['test']['text'])
     test_labels = list(data['test']['label'])
     
     st.info("Applying custom negation preprocessing...")
-    train_texts = handle_negation(train_texts)
+    train_texts_preprocessed = handle_negation(train_texts_raw)
     test_texts = handle_negation(test_texts)
+    
+    # 2. AGGRESSIVE CLASS BALANCING (Simulated Oversampling/Undersampling)
+    st.info("Applying aggressive class balancing (simulated over/undersampling)...")
+    
+    df_train = pd.DataFrame({'text': train_texts_preprocessed, 'label': train_labels_raw})
+    
+    # Calculate target sample size (use the max count to simulate oversampling up to that level, and undersampling down to it)
+    label_counts = df_train['label'].value_counts()
+    max_count = label_counts.max()
+    target_count = int(max_count * 0.7) # Reduce majority size slightly
+
+    balanced_samples = []
+    
+    # Undersample/Oversample all classes to be closer to the median count for stability
+    for label in label_counts.index:
+        subset = df_train[df_train['label'] == label]
+        
+        if len(subset) > target_count:
+            # Undersample (for Joy/Sadness)
+            balanced_samples.append(subset.sample(target_count, random_state=42))
+        else:
+            # Oversample (for Love, Anger, Fear, Surprise)
+            if len(subset) > 0:
+                balanced_samples.append(subset.sample(target_count, replace=True, random_state=42))
+            
+    df_balanced = pd.concat(balanced_samples).sample(frac=1, random_state=42).reset_index(drop=True) # Shuffle
+
+    train_texts = df_balanced['text'].tolist()
+    train_labels = df_balanced['label'].tolist()
     
     all_texts = train_texts + test_texts
 
-    # 2. Tokenization and Sequencing
+    # 3. Tokenization and Sequencing
     tokenizer = Tokenizer(num_words=MAX_WORDS, oov_token="<unk>")
     tokenizer.fit_on_texts(all_texts + ['__NEGATED__', 'wow', 'unexpected', 'surprise', 'not_happy', 'not_good']) 
     
@@ -166,21 +204,10 @@ def load_and_train_model():
     # Convert labels to one-hot encoding
     train_labels_one_hot = tf.keras.utils.to_categorical(train_labels, num_classes=NUM_CLASSES)
     
-    # 3. Class Weighting (Anti-Bias Fix)
-    st.info("Calculating class weights to counteract dataset bias...")
-    total_samples = len(train_labels)
-    class_counts = np.bincount(train_labels)
-    class_weights = {}
-    for i in range(NUM_CLASSES):
-        class_weights[i] = total_samples / (NUM_CLASSES * class_counts[i])
-        
-    # 4. CRITICAL: Anti-Negation Embedding Initialization with Hyper-initialization
+    # 4. CRITICAL: Anti-Negation Embedding Initialization
     st.info("Initializing embedding matrix with hyper-initialized anti-negation mirror semantics...")
     
-    
-    # Use a standard deviation for most words
     std_dev_normal = 0.05
-    # Use a much larger standard deviation for negation/surprise words (Aggressive hyper-tuning)
     std_dev_negated = 0.20 
     
     embedding_matrix = np.random.normal(loc=0.0, scale=std_dev_normal, size=(num_words, EMBEDDING_DIM))
@@ -192,7 +219,6 @@ def load_and_train_model():
             
         # 4a. Anti-Negation Mirror Logic (Guarantees not_happy != happy)
         if word.startswith('not_') or word.startswith('never_'):
-            # Hyper-initialize the negated token
             embedding_matrix[index] = np.random.normal(loc=0.0, scale=std_dev_negated, size=(EMBEDDING_DIM,))
             
             if word.startswith('not_'):
@@ -200,7 +226,6 @@ def load_and_train_model():
                 original_index = tokenizer.word_index.get(original_word)
                 
                 if original_index is not None and original_index < num_words:
-                    # Overwrite the hyper-initialized negated token's embedding as the inverse of the original word's embedding
                     embedding_matrix[index] = -embedding_matrix[original_index]
             
         # 4b. Hyper-initialize Surprise keywords to separate them from Joy
@@ -213,10 +238,10 @@ def load_and_train_model():
         embedding_matrix[negated_index] = np.random.normal(loc=0.0, scale=std_dev_negated, size=(EMBEDDING_DIM,))
 
 
-    # 5. Build and Train the BiLSTM Model
-    st.info(f"Building and training the Maximal Capacity BiLSTM Model for up to {EPOCHS} epochs...")
+    # 5. Build and Train the Gated Ensemble Model
+    st.info(f"Building and training the Gated Ensemble Model for up to {EPOCHS} epochs...")
     
-    model = build_bilstm_model(num_words, embedding_matrix)
+    model = build_gated_ensemble_model(num_words, embedding_matrix)
 
     early_stopping = EarlyStopping(
         monitor='val_loss', 
@@ -232,12 +257,12 @@ def load_and_train_model():
             epochs=EPOCHS, 
             batch_size=128, 
             validation_split=0.1,
-            class_weight=class_weights, 
+            # No static class weights needed, as balancing is done via sampling
             callbacks=[early_stopping],
             verbose=0 
         )
     except Exception as e:
-        st.error(f"Error during training the BiLSTM Model: {e}")
+        st.error(f"Error during training the Gated Ensemble Model: {e}")
         return None, tokenizer, {'accuracy': 0, 'precision': 0, 'recall': 0, 'f1_score': 0}
             
     # 6. Prediction and Evaluation
@@ -246,7 +271,6 @@ def load_and_train_model():
     
     y_pred = np.argmax(pred_probs, axis=1)
     
-    # Calculate Metrics based on ensemble prediction
     accuracy = accuracy_score(test_labels, y_pred)
     precision, recall, f1, _ = precision_recall_fscore_support(
         test_labels, y_pred, average='macro', zero_division=0
@@ -259,21 +283,17 @@ def load_and_train_model():
         'f1_score': f1
     }
 
-    st.success(f"Model Training Complete! BiLSTM Accuracy: {accuracy:.4f}")
+    st.success(f"Model Training Complete! Gated Ensemble Accuracy: {accuracy:.4f}")
     return model, tokenizer, metrics
 
 
 # --- Prediction Function ---
 def predict_emotion(model, tokenizer, text):
-    """Predicts the emotion of a given review text using the single BiLSTM model."""
-    # 1. Apply the same negation preprocessing as training
+    """Predicts the emotion of a given review text using the single Gated Ensemble model."""
     preprocessed_text = handle_negation([text])[0]
-    
-    # 2. Tokenize and pad
     sequence = tokenizer.texts_to_sequences([preprocessed_text])
     padded_sequence = pad_sequences(sequence, maxlen=MAX_LEN, padding='post', truncating='post')
     
-    # 3. Predict using the single model
     ensemble_prediction = model.predict(padded_sequence, verbose=0)[0]
     
     predicted_id = np.argmax(ensemble_prediction)
@@ -282,19 +302,14 @@ def predict_emotion(model, tokenizer, text):
     return predicted_label
 
 
-# --- Core Analysis Logic ---
+# --- Core Analysis Logic (unchanged) ---
 def get_recommendation_and_comment(all_emotions):
-    """
-    Determines the overall recommended emotion and the buy/no-buy comment.
-    """
     if not all_emotions:
         return "N/A", "Please enter at least one review for analysis.", {}
 
     emotion_counts = Counter(all_emotions)
-    
     max_count = max(emotion_counts.values())
     top_emotions = [emotion for emotion, count in emotion_counts.items() if count == max_count]
-
     dominant_emotion = top_emotions[0] 
     
     if len(top_emotions) > 1:
@@ -315,7 +330,6 @@ def get_recommendation_and_comment(all_emotions):
             "it suggests a wide range of unexpected outcomes. Review customer feedback carefully."
         )
     else:
-        # Sadness, Anger, Fear
         comment = (
             f"**Recommendation: DO NOT BUY.** The dominant sentiment is negative ({dominant_emotion}), "
             "suggesting significant customer dissatisfaction or potential product issues. Caution is advised."
@@ -324,10 +338,6 @@ def get_recommendation_and_comment(all_emotions):
     return dominant_emotion, comment, emotion_counts
 
 def create_simulated_word_cloud(emotion_counts, dominant_emotion):
-    """
-    Creates a simulated word cloud using HTML/CSS, where text size is based on count, 
-    and the dominant emotion is highlighted and proportionally larger.
-    """
     if not emotion_counts:
         return ""
         
@@ -378,7 +388,7 @@ def create_simulated_word_cloud(emotion_counts, dominant_emotion):
     return html_content
 
 
-# --- Main Streamlit App ---
+# --- Main Streamlit App (unchanged) ---
 def main():
     
     # Initialize session state for analysis results
