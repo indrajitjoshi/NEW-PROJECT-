@@ -109,18 +109,7 @@ def build_bilstm_model(num_words, embedding_matrix):
     Builds the stable two-layer BiLSTM model (best for long-range context and negation),
     now with maximum representational capacity (EMBEDDING_DIM=200).
     """
-    model = Sequential([
-        create_embedding_layer(num_words, embedding_matrix),
-        Dropout(0.3),
-        Bidirectional(LSTM(RNN_UNITS, return_sequences=True, dropout=0.1, 
-                                 kernel_regularizer=l2(REGULARIZATION_RATE)))(input_layer), # Layer 1
-        Bidirectional(LSTM(RNN_UNITS, kernel_regularizer=l2(REGULARIZATION_RATE)))(input_layer), # Final layer
-        Dense(DENSE_UNITS, activation='relu', kernel_regularizer=l2(REGULARIZATION_RATE)),
-        Dropout(0.5),
-        Dense(NUM_CLASSES, activation='softmax')
-    ])
-    
-    # Need to correctly define the sequential model with an Input layer
+    # Use Keras Functional API
     input_layer = Input(shape=(MAX_LEN,))
     x = create_embedding_layer(num_words, embedding_matrix)(input_layer)
     x = Dropout(0.3)(x)
