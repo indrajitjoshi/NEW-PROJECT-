@@ -10,6 +10,7 @@ from tensorflow.keras.layers import Embedding, Bidirectional, LSTM, Dense, Dropo
 from tensorflow.keras.callbacks import EarlyStopping
 from tensorflow.keras.initializers import Constant
 import os
+import sys
 from collections import Counter
 import re
 
@@ -24,7 +25,7 @@ EMBEDDING_DIM = 128     # Dimension of the word embeddings
 RNN_UNITS = 200         # Capacity of LSTM/GRU cells
 DENSE_UNITS = 512       # High capacity for complex feature separation
 NUM_CLASSES = 6
-EPOCHS = 15             # Reduced from 20 to 15 for a faster, more stable startup.
+EPOCHS = 15             # Stable epoch count optimized for training time vs. performance
 NUM_REVIEWS = 10        
 TRAINABLE_EMBEDDING = True # Allow fine-tuning for better anti-bias integration
 
@@ -124,14 +125,15 @@ def build_cnn_model(num_words, embedding_matrix):
 
 def build_bilstm_model(num_words, embedding_matrix):
     """
-    Builds the stable two-layer BiLSTM model. Reverted to 2 layers to drastically reduce 
-    training time, addressing the long startup hang.
+    Builds the stable three-layer BiLSTM model (re-instated for high-accuracy target).
+    This depth is crucial for correctly processing negation and subtle negative emotions.
     """
     model = Sequential([
         create_embedding_layer(num_words, embedding_matrix),
         Dropout(0.3),
         Bidirectional(LSTM(RNN_UNITS, return_sequences=True, dropout=0.1)), # Layer 1
-        Bidirectional(LSTM(RNN_UNITS)),                                      # Final layer (Layer 2)
+        Bidirectional(LSTM(RNN_UNITS, return_sequences=True, dropout=0.1)), # Layer 2 (Re-added for capacity)
+        Bidirectional(LSTM(RNN_UNITS)),                                      # Final layer (Layer 3)
         Dense(DENSE_UNITS, activation='relu'),
         Dropout(0.5),
         Dense(NUM_CLASSES, activation='softmax')
@@ -155,13 +157,12 @@ def build_gru_model(num_words, embedding_matrix):
 
 # --- Caching function to load data and train the model once ---
 
-@st.cache_resource
+@st.cache_resource(show_spinner=True)
 def load_and_train_model():
     """Loads data, trains the Ensemble of three models, and evaluates them."""
     st.info("Loading and pre-processing dataset...")
     
     # 1. Load Data
-    # The 'emotion' dataset contains the six required labels: sadness, joy, love, anger, fear, surprise
     data = load_dataset("dair-ai/emotion", "split")
     
     # Combine train and validation splits for maximum data utilization
@@ -181,7 +182,6 @@ def load_and_train_model():
     tokenizer = Tokenizer(num_words=MAX_WORDS, oov_token="<unk>")
     tokenizer.fit_on_texts(all_texts)
     
-    # Determine the actual vocabulary size
     num_words = min(MAX_WORDS, len(tokenizer.word_index) + 1)
 
     train_sequences = tokenizer.texts_to_sequences(train_texts)
@@ -223,7 +223,7 @@ def load_and_train_model():
 
     early_stopping = EarlyStopping(
         monitor='val_loss', 
-        patience=5, 
+        patience=3, # Reduced patience slightly to save time
         restore_best_weights=True, 
         verbose=0 # Run silently
     )
@@ -236,7 +236,7 @@ def load_and_train_model():
                 train_padded, 
                 train_labels_one_hot,
                 epochs=EPOCHS, 
-                batch_size=32,
+                batch_size=64, # Increased batch size slightly for speed
                 validation_split=0.1,
                 class_weight=class_weights, # Apply anti-bias weights
                 callbacks=[early_stopping],
@@ -244,12 +244,10 @@ def load_and_train_model():
             )
         except Exception as e:
             st.error(f"Error during training Model {i+1}: {e}")
-            # Non-critical models can be skipped if one fails
             continue
             
     # 6. Ensemble Prediction and Evaluation
     
-    # Get predictions (probabilities) from all models
     pred_probs_list = [model.predict(test_padded, verbose=0) for model in models if model is not None]
     
     if not pred_probs_list:
@@ -399,10 +397,12 @@ def create_simulated_word_cloud(emotion_counts, dominant_emotion):
         if emotion == dominant_emotion:
             font_size *= 1.2
             emotion_style = f'font-size: {font_size:.0f}px; color: {color_map.get(emotion, "#FFFFFF")}; font-weight: 900; text-shadow: 0 0 10px #FFD700;'
-            count_style = f'font-size: {font_size * 0.7:.0f}px; color: #FFD700; font-weight: 900; margin-left: -5px;'
+            # CRITICAL: Increase count visibility
+            count_style = f'font-size: {font_size * 0.9:.0f}px; color: #FFD700; font-weight: 900; margin-left: -5px;'
         else:
             emotion_style = f'font-size: {font_size:.0f}px; color: {color_map.get(emotion, "#FFFFFF")}; opacity: 0.8; font-weight: 700;'
-            count_style = f'font-size: {font_size * 0.7:.0f}px; color: #A8A8A8; font-weight: 700; margin-left: -5px;'
+            # CRITICAL: Increase count visibility
+            count_style = f'font-size: {font_size * 0.8:.0f}px; color: #E0F7FA; font-weight: 700; margin-left: -5px;'
         
         # Output emotion text and count separately for distinct styling
         html_content += f'<span style="display: inline-flex; align-items: baseline;">'
@@ -466,6 +466,13 @@ def main():
             background-color: rgba(0, 0, 0, 0.3) !important; color: white !important;
             border: 1px solid #7b1296;
         }
+        
+        /* CRITICAL: Style for Input Labels */
+        div[data-testid="stTextInput"] label p, div[data-testid="stTextArea"] label p {
+            color: #FFD700 !important; /* Gold text for input labels */
+            font-weight: 700;
+        }
+
         /* Specific styling for the recommendation box */
         .recommendation-box {
             background-color: #3d0a52; padding: 20px; border-radius: 15px;
@@ -523,7 +530,8 @@ def main():
         st.session_state.is_trained = True
         st.session_state.metrics = metrics
     except Exception as e:
-        st.error(f"Failed to load or train model: {e}")
+        # In case of initialization failure, log error and show a warning
+        st.error(f"Failed to initialize model: {e}")
         st.session_state.is_trained = False
         return
 
