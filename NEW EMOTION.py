@@ -8,7 +8,7 @@ from tensorflow.keras.preprocessing.sequence import pad_sequences
 from tensorflow.keras.models import Sequential, Model
 from tensorflow.keras.layers import Embedding, Bidirectional, LSTM, Dense, Dropout, Conv1D, GlobalMaxPooling1D, GRU, Input
 from tensorflow.keras.callbacks import EarlyStopping
-from tensorflow.keras.initializers import Constant
+from tensorflow.keras.initializers import Constant, Zeros, Ones
 from tensorflow.keras.regularizers import l2 
 import os
 import sys
@@ -23,9 +23,9 @@ import tensorflow as tf
 # --- Configuration (MAXIMAL STABLE SOFT VOTING ENSEMBLE) ---
 MAX_WORDS = 20000       
 MAX_LEN = 150           
-EMBEDDING_DIM = 64      # Stable embedding dimension
-RNN_UNITS = 64          # Stable recurrent units
-DENSE_UNITS = 128       # Stable dense units
+EMBEDDING_DIM = 64      
+RNN_UNITS = 64          
+DENSE_UNITS = 128       
 NUM_CLASSES = 6
 EPOCHS = 20             
 NUM_REVIEWS = 10        
@@ -89,6 +89,28 @@ def handle_negation(texts):
     return processed_texts
 
 
+# --- Custom Bias Initializer for the final Dense layer ---
+def create_custom_bias_initializer(num_classes):
+    """
+    Creates a custom initializer to inject bias against dominant classes (Joy/Sadness) 
+    and for minority classes (Love/Surprise).
+    """
+    # 0: Sadness, 1: Joy, 2: Love, 3: Anger, 4: Fear, 5: Surprise
+    # Bias values (log(p / (1-p)) where p is the desired probability boost)
+    initial_bias = np.zeros(num_classes)
+    
+    # Strongly penalize Joy and Sadness (dominant classes)
+    initial_bias[0] = -0.5  # Sadness
+    initial_bias[1] = -0.5  # Joy
+    
+    # Slightly boost Love and Surprise (underrepresented/confused classes)
+    initial_bias[2] = 0.2   # Love
+    initial_bias[5] = 0.3   # Surprise 
+    
+    # Use a lambda function to return the constant value
+    return Constant(initial_bias)
+
+
 # --- Ensemble Model Building Functions ---
 
 def create_embedding_layer(num_words, embedding_matrix=None, name='embedding_layer'):
@@ -103,7 +125,7 @@ def create_embedding_layer(num_words, embedding_matrix=None, name='embedding_lay
     )
 
 def build_cnn_model(num_words, embedding_matrix):
-    """Builds the deep CNN model for local features."""
+    """Builds the deep CNN model for local features with custom bias."""
     input_layer = Input(shape=(MAX_LEN,))
     embedding_output = create_embedding_layer(num_words, embedding_matrix, name='cnn_embed')(input_layer)
 
@@ -112,14 +134,17 @@ def build_cnn_model(num_words, embedding_matrix):
     x = GlobalMaxPooling1D()(x)
     x = Dense(DENSE_UNITS, activation='relu', kernel_regularizer=l2(REGULARIZATION_RATE))(x)
     x = Dropout(0.5)(x)
-    output_layer = Dense(NUM_CLASSES, activation='softmax')(x)
+    
+    # Custom Bias Initialization
+    output_layer = Dense(NUM_CLASSES, activation='softmax', 
+                         bias_initializer=create_custom_bias_initializer(NUM_CLASSES))(x)
     
     model = Model(inputs=input_layer, outputs=output_layer)
     model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
     return model
 
 def build_bilstm_model(num_words, embedding_matrix):
-    """Builds the stable two-layer BiLSTM model for sequential context."""
+    """Builds the stable two-layer BiLSTM model for sequential context with custom bias."""
     input_layer = Input(shape=(MAX_LEN,))
     embedding_output = create_embedding_layer(num_words, embedding_matrix, name='lstm_embed')(input_layer)
     x = Dropout(0.3)(embedding_output)
@@ -130,14 +155,17 @@ def build_bilstm_model(num_words, embedding_matrix):
     
     x = Dense(DENSE_UNITS, activation='relu', kernel_regularizer=l2(REGULARIZATION_RATE))(x)
     x = Dropout(0.5)(x)
-    output_layer = Dense(NUM_CLASSES, activation='softmax')(x)
+    
+    # Custom Bias Initialization
+    output_layer = Dense(NUM_CLASSES, activation='softmax', 
+                         bias_initializer=create_custom_bias_initializer(NUM_CLASSES))(x)
     
     model = Model(inputs=input_layer, outputs=output_layer)
     model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
     return model
 
 def build_gru_model(num_words, embedding_matrix):
-    """Builds the stable BiGRU model for efficient sequence processing."""
+    """Builds the stable BiGRU model for efficient sequence processing with custom bias."""
     input_layer = Input(shape=(MAX_LEN,))
     embedding_output = create_embedding_layer(num_words, embedding_matrix, name='gru_embed')(input_layer)
     x = Dropout(0.3)(embedding_output)
@@ -147,7 +175,10 @@ def build_gru_model(num_words, embedding_matrix):
     
     x = Dense(DENSE_UNITS, activation='relu', kernel_regularizer=l2(REGULARIZATION_RATE))(x)
     x = Dropout(0.5)(x)
-    output_layer = Dense(NUM_CLASSES, activation='softmax')(x)
+    
+    # Custom Bias Initialization
+    output_layer = Dense(NUM_CLASSES, activation='softmax', 
+                         bias_initializer=create_custom_bias_initializer(NUM_CLASSES))(x)
     
     model = Model(inputs=input_layer, outputs=output_layer)
     model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
@@ -559,8 +590,8 @@ def main():
     cols = st.columns(2)
     
     # Use a fixed list of emotions for the 10 samples
-    # Covers all 6 primary emotions + the 4 most challenging/frequently misclassified
-    fixed_sample_emotions = ['sadness', 'joy', 'love', 'anger', 'fear', 'surprise', 'sadness', 'joy', 'love', 'anger']
+    # Focused testing: Sadness (negation), Love (confusion), Surprise (confusion)
+    fixed_sample_emotions = ['sadness', 'love', 'surprise', 'sadness', 'love', 'surprise', 'joy', 'anger', 'fear', 'love']
 
     for i in range(NUM_REVIEWS):
         col_index = i % 2
