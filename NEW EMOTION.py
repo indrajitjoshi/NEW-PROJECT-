@@ -19,12 +19,12 @@ import re
 os.environ['TF_CPP_CPP_LOG_LEVEL'] = '3'
 import tensorflow as tf
 
-# --- Configuration (MAXIMAL STABLE INDEPENDENT CAPACITY) ---
+# --- Configuration (MAXIMAL STABLE BiLSTM CAPACITY) ---
 MAX_WORDS = 20000       
 MAX_LEN = 150           
-EMBEDDING_DIM = 150     
-RNN_UNITS = 128         
-DENSE_UNITS = 384       
+EMBEDDING_DIM = 200     # Increased dramatically for representational capacity
+RNN_UNITS = 256         # Increased capacity
+DENSE_UNITS = 512       # Increased capacity
 NUM_CLASSES = 6
 EPOCHS = 20             
 NUM_REVIEWS = 10        
@@ -91,66 +91,52 @@ def handle_negation(texts):
     return processed_texts
 
 
-# --- GATED FUNCTIONAL ENSEMBLE MODEL BUILDING (Independent Embeddings) ---
+# --- SIMPLEST STABLE MODEL BUILDING (BiLSTM) ---
 
 def create_embedding_layer(num_words, embedding_matrix=None):
     """Creates the Embedding layer, initialized with pre-trained vectors if provided."""
-    # Use a lambda function to create an embedding constructor for re-use
-    return lambda: Embedding(
+    return Embedding(
         input_dim=num_words,
         output_dim=EMBEDDING_DIM,
         weights=[embedding_matrix] if embedding_matrix is not None else None,
         input_length=MAX_LEN,
-        trainable=TRAINABLE_EMBEDDING
+        trainable=TRAINABLE_EMBEDDING,
+        name='embedding_layer'
     )
 
-def build_gated_ensemble_model(num_words, embedding_matrix):
+def build_bilstm_model(num_words, embedding_matrix):
     """
-    Builds a single, Gated Multi-Path Functional Model with INDEPENDENT EMBEDDING LAYERS
-    to enforce maximum stability and specialization.
+    Builds the stable two-layer BiLSTM model (best for long-range context and negation),
+    now with maximum representational capacity (EMBEDDING_DIM=200).
     """
+    model = Sequential([
+        create_embedding_layer(num_words, embedding_matrix),
+        Dropout(0.3),
+        Bidirectional(LSTM(RNN_UNITS, return_sequences=True, dropout=0.1, 
+                                 kernel_regularizer=l2(REGULARIZATION_RATE)))(input_layer), # Layer 1
+        Bidirectional(LSTM(RNN_UNITS, kernel_regularizer=l2(REGULARIZATION_RATE)))(input_layer), # Final layer
+        Dense(DENSE_UNITS, activation='relu', kernel_regularizer=l2(REGULARIZATION_RATE)),
+        Dropout(0.5),
+        Dense(NUM_CLASSES, activation='softmax')
+    ])
     
-    # 1. Input Layer
+    # Need to correctly define the sequential model with an Input layer
     input_layer = Input(shape=(MAX_LEN,))
+    x = create_embedding_layer(num_words, embedding_matrix)(input_layer)
+    x = Dropout(0.3)(x)
     
-    # 2. Independent Embedding Instances (Crucial Fix for Instability)
-    embedding_constructor = create_embedding_layer(num_words, embedding_matrix)
+    # Layer 1
+    x = Bidirectional(LSTM(RNN_UNITS, return_sequences=True, dropout=0.1, 
+                           kernel_regularizer=l2(REGULARIZATION_RATE)))(x)
     
-    # --- Pathway A: CNN (Local Features/N-Grams) ---
-    cnn_embed = embedding_constructor()(input_layer)
-    cnn_x = Dropout(0.3)(cnn_embed)
-    cnn_path = Conv1D(filters=RNN_UNITS, kernel_size=5, activation='relu', padding='same',
-                      kernel_regularizer=l2(REGULARIZATION_RATE))(cnn_x)
-    cnn_path = Conv1D(filters=RNN_UNITS // 2, kernel_size=3, activation='relu', padding='same', 
-                      kernel_regularizer=l2(REGULARIZATION_RATE))(cnn_path)
-    cnn_path = GlobalMaxPooling1D()(cnn_path)
-
-    # --- Pathway B: BiLSTM (Long-Range Context/Negation) ---
-    lstm_embed = embedding_constructor()(input_layer)
-    lstm_x = Dropout(0.3)(lstm_embed)
-    lstm_path = Bidirectional(LSTM(RNN_UNITS, return_sequences=True, dropout=0.1, 
-                                 kernel_regularizer=l2(REGULARIZATION_RATE)))(lstm_x)
-    lstm_path = Bidirectional(LSTM(RNN_UNITS, kernel_regularizer=l2(REGULARIZATION_RATE)))(lstm_path)
-
-    # --- Pathway C: BiGRU (Efficient Sequence Context) ---
-    gru_embed = embedding_constructor()(input_layer)
-    gru_x = Dropout(0.3)(gru_embed)
-    gru_path = Bidirectional(GRU(RNN_UNITS, dropout=0.1, 
-                                 kernel_regularizer=l2(REGULARIZATION_RATE)))(gru_x)
+    # Final Layer
+    x = Bidirectional(LSTM(RNN_UNITS, kernel_regularizer=l2(REGULARIZATION_RATE)))(x)
     
-    # 3. Gating/Fusion Layer (Concatenate all features)
-    merged = concatenate([cnn_path, lstm_path, gru_path])
-    
-    # 4. Final Feature Processing Layer (The "Gating Mechanism")
-    merged = Dense(DENSE_UNITS, activation='relu', kernel_regularizer=l2(REGULARIZATION_RATE))(merged)
-    merged = Dropout(0.5)(merged)
-    
-    # 5. Output Layer
-    output_layer = Dense(NUM_CLASSES, activation='softmax')(merged)
+    x = Dense(DENSE_UNITS, activation='relu', kernel_regularizer=l2(REGULARIZATION_RATE))(x)
+    x = Dropout(0.5)(x)
+    output_layer = Dense(NUM_CLASSES, activation='softmax')(x)
     
     model = Model(inputs=input_layer, outputs=output_layer)
-    # The loss function remains categorical_crossentropy, but the learning stabilization 
-    # and initialization focus the training effort on problematic classes.
     model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
     return model
 
@@ -159,7 +145,7 @@ def build_gated_ensemble_model(num_words, embedding_matrix):
 
 @st.cache_resource(show_spinner=True)
 def load_and_train_model():
-    """Loads data, trains the single Gated Ensemble Model, and evaluates it."""
+    """Loads data, trains the single BiLSTM Model, and evaluates it."""
     st.info("Loading and pre-processing dataset...")
     
     # 1. Load Data
@@ -206,7 +192,7 @@ def load_and_train_model():
     # Use a standard deviation for most words
     std_dev_normal = 0.05
     # Use a much larger standard deviation for negation/surprise words (Aggressive hyper-tuning)
-    std_dev_negated = 0.30 
+    std_dev_negated = 0.20 
     
     embedding_matrix = np.random.normal(loc=0.0, scale=std_dev_normal, size=(num_words, EMBEDDING_DIM))
     
@@ -238,10 +224,10 @@ def load_and_train_model():
         embedding_matrix[negated_index] = np.random.normal(loc=0.0, scale=std_dev_negated, size=(EMBEDDING_DIM,))
 
 
-    # 5. Build and Train the Gated Ensemble Model
-    st.info(f"Building and training the Gated Multi-Path Ensemble Model for up to {EPOCHS} epochs...")
+    # 5. Build and Train the BiLSTM Model
+    st.info(f"Building and training the Maximal Capacity BiLSTM Model for up to {EPOCHS} epochs...")
     
-    model = build_gated_ensemble_model(num_words, embedding_matrix)
+    model = build_bilstm_model(num_words, embedding_matrix)
 
     early_stopping = EarlyStopping(
         monitor='val_loss', 
@@ -262,10 +248,10 @@ def load_and_train_model():
             verbose=0 
         )
     except Exception as e:
-        st.error(f"Error during training the Gated Ensemble Model: {e}")
+        st.error(f"Error during training the BiLSTM Model: {e}")
         return None, tokenizer, {'accuracy': 0, 'precision': 0, 'recall': 0, 'f1_score': 0}
             
-    # 6. Ensemble Prediction and Evaluation
+    # 6. Prediction and Evaluation
     
     pred_probs = model.predict(test_padded, verbose=0)
     
@@ -284,13 +270,13 @@ def load_and_train_model():
         'f1_score': f1
     }
 
-    st.success(f"Model Training Complete! Gated Ensemble Accuracy: {accuracy:.4f}")
+    st.success(f"Model Training Complete! BiLSTM Accuracy: {accuracy:.4f}")
     return model, tokenizer, metrics
 
 
 # --- Prediction Function ---
 def predict_emotion(model, tokenizer, text):
-    """Predicts the emotion of a given review text using the single Gated Ensemble model."""
+    """Predicts the emotion of a given review text using the single BiLSTM model."""
     # 1. Apply the same negation preprocessing as training
     preprocessed_text = handle_negation([text])[0]
     
