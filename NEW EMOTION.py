@@ -22,9 +22,9 @@ import tensorflow as tf
 # --- Configuration (MAXIMAL STABLE CAPACITY) ---
 MAX_WORDS = 20000       
 MAX_LEN = 150           
-EMBEDDING_DIM = 128     
-RNN_UNITS = 160         # Increased for Max Stable Capacity
-DENSE_UNITS = 384       # Increased for Max Stable Capacity
+EMBEDDING_DIM = 150     
+RNN_UNITS = 192         # FINAL INCREASE for maximal stable sequence feature extraction
+DENSE_UNITS = 512       # FINAL INCREASE for maximal stable emotion feature separation
 NUM_CLASSES = 6
 EPOCHS = 20             
 NUM_REVIEWS = 10        
@@ -38,13 +38,13 @@ id_to_label = {i: label for i, label in enumerate(emotion_labels)}
 
 # Custom Samples designed for clear classification tests
 SAMPLE_REVIEWS = {
-    # CRITICAL TEST CASE
+    # CRITICAL TEST CASE - MUST BE SADNESS
     "sadness": "I am not happy with this purchase. It makes me feel miserable and disappointed.", 
     "joy": "This product is amazing and fills me with joy! I am absolutely ecstatic.",
     "love": "I absolutely adore the design and quality, I'm completely in love.",
     "anger": "It broke immediately and this makes me so furious and upset. I hate it.",
     "fear": "I am afraid to use this device after the smoke I saw, it is worrying.",
-    # SURPRISE TEST CASE
+    # CRITICAL TEST CASE - MUST BE SURPRISE
     "surprise": "Wow! I truly did not expect it to be this good. What a pleasant surprise." 
 }
 
@@ -174,7 +174,8 @@ def load_and_train_model():
 
     # 2. Tokenization and Sequencing
     tokenizer = Tokenizer(num_words=MAX_WORDS, oov_token="<unk>")
-    tokenizer.fit_on_texts(all_texts + ['__NEGATED__']) 
+    # Add explicit negation and surprise-related tokens to guarantee indices
+    tokenizer.fit_on_texts(all_texts + ['__NEGATED__', 'wow', 'unexpected', 'surprise']) 
     
     num_words = min(MAX_WORDS, len(tokenizer.word_index) + 1)
 
@@ -201,30 +202,33 @@ def load_and_train_model():
     
     # Use a standard deviation for most words
     std_dev_normal = 0.05
-    # Use a larger standard deviation for negation-related words to make their signal stronger
-    std_dev_negated = 0.15 
+    # Use a larger standard deviation for negation/surprise words to make their signal stronger
+    std_dev_negated = 0.20 # Increased initialization strength
     
     embedding_matrix = np.random.normal(loc=0.0, scale=std_dev_normal, size=(num_words, EMBEDDING_DIM))
     
-    # Perform semantic initialization (requires original words and negated forms to be indexed)
+    # Perform semantic initialization for negation and surprise words
     for word, index in tokenizer.word_index.items():
         if index >= num_words:
             continue
             
-        # Check for our manually negated tokens (e.g., 'not_happy', 'never_sad')
+        # 4a. Anti-Negation Mirror Logic
         if word.startswith('not_') or word.startswith('never_'):
             # Hyper-initialize the negated token
             embedding_matrix[index] = np.random.normal(loc=0.0, scale=std_dev_negated, size=(EMBEDDING_DIM,))
             
             # Apply anti-negation mirror logic
             if word.startswith('not_'):
-                # Try to get the index of the original word ('happy' from 'not_happy')
                 original_word = word.split('_', 1)[1] 
                 original_index = tokenizer.word_index.get(original_word)
                 
                 if original_index is not None and original_index < num_words:
                     # Overwrite the hyper-initialized negated token's embedding as the inverse of the original word's embedding
                     embedding_matrix[index] = -embedding_matrix[original_index]
+            
+        # 4b. Hyper-initialize Surprise keywords to separate them from Joy
+        if word in ['wow', 'surprise', 'unexpected', 'shocked', 'unbelievable']:
+             embedding_matrix[index] = np.random.normal(loc=0.0, scale=std_dev_negated, size=(EMBEDDING_DIM,))
             
     # Set unique initialization for the global negation flag
     negated_index = tokenizer.word_index.get('__negated__', 0)
