@@ -20,12 +20,12 @@ import random
 os.environ['TF_CPP_CPP_LOG_LEVEL'] = '3'
 import tensorflow as tf
 
-# --- Configuration (ULTRA-STABLE GATED ENSEMBLE CAPACITY) ---
+# --- Configuration (QUAD-PATH ENSEMBLE CAPACITY) ---
 MAX_WORDS = 20000       
 MAX_LEN = 150           
-EMBEDDING_DIM = 64      # Ultra-stable embedding dimension (Minimal memory use)
-RNN_UNITS = 64          # Ultra-stable recurrent units
-DENSE_UNITS = 128       # Ultra-stable dense units
+EMBEDDING_DIM = 64      # Stable embedding dimension
+RNN_UNITS = 64          # Stable recurrent units
+DENSE_UNITS = 128       # Stable dense units
 NUM_CLASSES = 6
 EPOCHS = 20             
 NUM_REVIEWS = 10        
@@ -89,7 +89,7 @@ def handle_negation(texts):
     return processed_texts
 
 
-# --- GATED FUNCTIONAL ENSEMBLE MODEL ---
+# --- QUAD-PATH GATED FUNCTIONAL ENSEMBLE MODEL ---
 
 def create_embedding_layer(num_words, embedding_matrix=None, name='embedding_layer'):
     """Creates the Embedding layer, initialized with pre-trained vectors."""
@@ -104,8 +104,8 @@ def create_embedding_layer(num_words, embedding_matrix=None, name='embedding_lay
 
 def build_gated_ensemble_model(num_words, embedding_matrix):
     """
-    Builds the stable Gated Functional Ensemble model combining CNN, BiLSTM, and BiGRU 
-    for maximal feature fusion and stability.
+    Builds the stable QUAD-PATH Gated Functional Ensemble model combining 
+    CNN, BiLSTM, BiGRU, and BoW for maximal feature diversity and stability.
     """
     input_layer = Input(shape=(MAX_LEN,))
     embedding_output = create_embedding_layer(num_words, embedding_matrix)(input_layer)
@@ -125,8 +125,13 @@ def build_gated_ensemble_model(num_words, embedding_matrix):
     gru_out = Bidirectional(GRU(RNN_UNITS, dropout=0.1, 
                                 kernel_regularizer=l2(REGULARIZATION_RATE)))(x)
     
-    # Concatenate all three feature vectors
-    merged = concatenate([lstm_out, cnn_out, gru_out])
+    # --- 4. BoW Pathway (Simple Feature Detection) ---
+    # Global average pooling acts as a simple Bag-of-Words feature extractor
+    bow_out = GlobalMaxPooling1D()(x) 
+    bow_out = Dense(RNN_UNITS, activation='relu', kernel_regularizer=l2(REGULARIZATION_RATE))(bow_out)
+    
+    # Concatenate all four feature vectors
+    merged = concatenate([lstm_out, cnn_out, gru_out, bow_out])
     
     # Gating and Classification Layers
     x = Dense(DENSE_UNITS, activation='relu', kernel_regularizer=l2(REGULARIZATION_RATE))(merged)
@@ -163,10 +168,10 @@ def load_and_train_model():
     
     df_train = pd.DataFrame({'text': train_texts_preprocessed, 'label': train_labels_raw})
     
-    # Calculate target sample size (use the max count to simulate oversampling up to that level, and undersampling down to it)
+    # Calculate target sample size 
     label_counts = df_train['label'].value_counts()
     max_count = label_counts.max()
-    target_count = int(max_count * 0.7) # Reduce majority size slightly
+    target_count = int(max_count * 0.7) 
 
     balanced_samples = []
     
@@ -175,10 +180,8 @@ def load_and_train_model():
         subset = df_train[df_train['label'] == label]
         
         if len(subset) > target_count:
-            # Undersample (for Joy/Sadness)
             balanced_samples.append(subset.sample(target_count, random_state=42))
         else:
-            # Oversample (for Love, Anger, Fear, Surprise)
             if len(subset) > 0:
                 balanced_samples.append(subset.sample(target_count, replace=True, random_state=42))
             
@@ -388,7 +391,7 @@ def create_simulated_word_cloud(emotion_counts, dominant_emotion):
     return html_content
 
 
-# --- Main Streamlit App (unchanged) ---
+# --- Main Streamlit App (rest of the file remains the same) ---
 def main():
     
     # Initialize session state for analysis results
