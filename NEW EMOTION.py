@@ -19,12 +19,12 @@ import re
 os.environ['TF_CPP_CPP_LOG_LEVEL'] = '3'
 import tensorflow as tf
 
-# --- Configuration (OPTIMIZED FOR STABILITY AND HIGH-QUALITY SEMANTICS) ---
+# --- Configuration (MAXIMAL STABLE CAPACITY) ---
 MAX_WORDS = 20000       
 MAX_LEN = 150           
 EMBEDDING_DIM = 128     
-RNN_UNITS = 128         # Optimized for Stability
-DENSE_UNITS = 256       # Optimized for Stability
+RNN_UNITS = 160         # Increased for Max Stable Capacity
+DENSE_UNITS = 384       # Increased for Max Stable Capacity
 NUM_CLASSES = 6
 EPOCHS = 20             
 NUM_REVIEWS = 10        
@@ -38,19 +38,21 @@ id_to_label = {i: label for i, label in enumerate(emotion_labels)}
 
 # Custom Samples designed for clear classification tests
 SAMPLE_REVIEWS = {
+    # CRITICAL TEST CASE
     "sadness": "I am not happy with this purchase. It makes me feel miserable and disappointed.", 
     "joy": "This product is amazing and fills me with joy! I am absolutely ecstatic.",
     "love": "I absolutely adore the design and quality, I'm completely in love.",
     "anger": "It broke immediately and this makes me so furious and upset. I hate it.",
     "fear": "I am afraid to use this device after the smoke I saw, it is worrying.",
+    # SURPRISE TEST CASE
     "surprise": "Wow! I truly did not expect it to be this good. What a pleasant surprise." 
 }
 
-# --- Preprocessing Function (Negation Handling) ---
+# --- Preprocessing Function (Aggressive Negation Handling) ---
 
 def handle_negation(texts):
     """
-    Handles negation by modifying phrases and appending a global negation flag.
+    Handles negation aggressively by modifying phrases and appending a global negation flag.
     """
     negation_words = ['not', 'no', 'never', "don't", "isn't", "wasn't", "wouldn't", 
                       "couldn't", "won't", "can't", 'do not', "did not", "will not",
@@ -195,6 +197,7 @@ def load_and_train_model():
         
     # 4. CRITICAL: Anti-Negation Embedding Initialization with Hyper-initialization
     st.info("Initializing embedding matrix with hyper-initialized anti-negation mirror semantics...")
+    
     
     # Use a standard deviation for most words
     std_dev_normal = 0.05
