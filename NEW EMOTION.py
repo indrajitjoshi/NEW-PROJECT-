@@ -6,7 +6,7 @@ from sklearn.metrics import accuracy_score, precision_recall_fscore_support
 from tensorflow.keras.preprocessing.text import Tokenizer
 from tensorflow.keras.preprocessing.sequence import pad_sequences
 from tensorflow.keras.models import Sequential, Model
-from tensorflow.keras.layers import Embedding, Bidirectional, LSTM, Dense, Dropout, Conv1D, GlobalMaxPooling1D, GRU, Input
+from tensorflow.keras.layers import Embedding, Bidirectional, LSTM, Dense, Dropout, Conv1D, GlobalMaxPooling1D, GRU, Input, concatenate
 from tensorflow.keras.callbacks import EarlyStopping
 from tensorflow.keras.initializers import Constant
 from tensorflow.keras.regularizers import l2 
@@ -19,12 +19,12 @@ import re
 os.environ['TF_CPP_CPP_LOG_LEVEL'] = '3'
 import tensorflow as tf
 
-# --- Configuration (MAXIMAL STABLE CAPACITY) ---
+# --- Configuration (GATED ENSEMBLE STABLE CAPACITY) ---
 MAX_WORDS = 20000       
 MAX_LEN = 150           
 EMBEDDING_DIM = 150     
-RNN_UNITS = 192         # FINAL INCREASE for maximal stable sequence feature extraction
-DENSE_UNITS = 512       # FINAL INCREASE for maximal stable emotion feature separation
+RNN_UNITS = 128         # Optimized capacity for stable functional model
+DENSE_UNITS = 384       # Optimized capacity for final classification/gating
 NUM_CLASSES = 6
 EPOCHS = 20             
 NUM_REVIEWS = 10        
@@ -91,7 +91,7 @@ def handle_negation(texts):
     return processed_texts
 
 
-# --- Ensemble Model Building Functions ---
+# --- GATED FUNCTIONAL ENSEMBLE MODEL BUILDING ---
 
 def create_embedding_layer(num_words, embedding_matrix=None):
     """Creates the Embedding layer, initialized with pre-trained vectors if provided."""
@@ -103,50 +103,47 @@ def create_embedding_layer(num_words, embedding_matrix=None):
         trainable=TRAINABLE_EMBEDDING
     )
 
-
-def build_cnn_model(num_words, embedding_matrix):
-    """Builds the deep CNN model with L2 regularization for stability."""
-    model = Sequential([
-        create_embedding_layer(num_words, embedding_matrix),
-        Conv1D(filters=RNN_UNITS, kernel_size=5, activation='relu', padding='same',
-               kernel_regularizer=l2(REGULARIZATION_RATE)),
-        Conv1D(filters=RNN_UNITS // 2, kernel_size=3, activation='relu', padding='same', 
-               kernel_regularizer=l2(REGULARIZATION_RATE)), 
-        GlobalMaxPooling1D(),
-        Dense(DENSE_UNITS, activation='relu', kernel_regularizer=l2(REGULARIZATION_RATE)), 
-        Dropout(0.5),
-        Dense(NUM_CLASSES, activation='softmax')
-    ])
-    model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
-    return model
-
-def build_bilstm_model(num_words, embedding_matrix):
+def build_gated_ensemble_model(num_words, embedding_matrix):
     """
-    Builds the two-layer BiLSTM model with L2 regularization for stability.
+    Builds a single, Gated Multi-Path Functional Model (CNN, BiLSTM, BiGRU)
+    to enforce stable feature fusion and maximize accuracy.
     """
-    model = Sequential([
-        create_embedding_layer(num_words, embedding_matrix),
-        Dropout(0.3),
-        Bidirectional(LSTM(RNN_UNITS, return_sequences=True, dropout=0.1, 
-                           kernel_regularizer=l2(REGULARIZATION_RATE))), 
-        Bidirectional(LSTM(RNN_UNITS, kernel_regularizer=l2(REGULARIZATION_RATE))), 
-        Dense(DENSE_UNITS, activation='relu', kernel_regularizer=l2(REGULARIZATION_RATE)), 
-        Dropout(0.5),
-        Dense(NUM_CLASSES, activation='softmax')
-    ])
-    model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
-    return model
+    
+    # 1. Input Layer
+    input_layer = Input(shape=(MAX_LEN,))
+    
+    # 2. Shared Embedding Layer
+    embedding = create_embedding_layer(num_words, embedding_matrix)(input_layer)
+    x = Dropout(0.3)(embedding)
 
-def build_gru_model(num_words, embedding_matrix):
-    """Builds the Bidirectional GRU model with L2 regularization for stability."""
-    model = Sequential([
-        create_embedding_layer(num_words, embedding_matrix),
-        Dropout(0.3),
-        Bidirectional(GRU(RNN_UNITS, dropout=0.1, kernel_regularizer=l2(REGULARIZATION_RATE))), 
-        Dense(DENSE_UNITS, activation='relu', kernel_regularizer=l2(REGULARIZATION_RATE)), 
-        Dropout(0.5),
-        Dense(NUM_CLASSES, activation='softmax')
-    ])
+    # --- Pathway A: CNN (Local Features/N-Grams) ---
+    cnn_path = Conv1D(filters=RNN_UNITS, kernel_size=5, activation='relu', padding='same',
+                      kernel_regularizer=l2(REGULARIZATION_RATE))(x)
+    cnn_path = Conv1D(filters=RNN_UNITS // 2, kernel_size=3, activation='relu', padding='same', 
+                      kernel_regularizer=l2(REGULARIZATION_RATE))(cnn_path)
+    cnn_path = GlobalMaxPooling1D()(cnn_path)
+
+    # --- Pathway B: BiLSTM (Long-Range Context/Negation) ---
+    lstm_path = Bidirectional(LSTM(RNN_UNITS, return_sequences=True, dropout=0.1, 
+                                 kernel_regularizer=l2(REGULARIZATION_RATE)))(x)
+    lstm_path = Bidirectional(LSTM(RNN_UNITS, kernel_regularizer=l2(REGULARIZATION_RATE)))(lstm_path)
+
+    # --- Pathway C: BiGRU (Efficient Sequence Context) ---
+    gru_path = Bidirectional(GRU(RNN_UNITS, dropout=0.1, 
+                                 kernel_regularizer=l2(REGULARIZATION_RATE)))(x)
+    
+    # 3. Gating/Fusion Layer (Concatenate all features)
+    merged = concatenate([cnn_path, lstm_path, gru_path])
+    
+    # 4. Final Feature Processing Layer (The "Gating Mechanism")
+    # This dense layer learns the optimal weights to combine the three pathways.
+    merged = Dense(DENSE_UNITS, activation='relu', kernel_regularizer=l2(REGULARIZATION_RATE))(merged)
+    merged = Dropout(0.5)(merged)
+    
+    # 5. Output Layer
+    output_layer = Dense(NUM_CLASSES, activation='softmax')(merged)
+    
+    model = Model(inputs=input_layer, outputs=output_layer)
     model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
     return model
 
@@ -155,7 +152,7 @@ def build_gru_model(num_words, embedding_matrix):
 
 @st.cache_resource(show_spinner=True)
 def load_and_train_model():
-    """Loads data, trains the Ensemble of three models, and evaluates them."""
+    """Loads data, trains the single Gated Ensemble Model, and evaluates it."""
     st.info("Loading and pre-processing dataset...")
     
     # 1. Load Data
@@ -175,7 +172,7 @@ def load_and_train_model():
     # 2. Tokenization and Sequencing
     tokenizer = Tokenizer(num_words=MAX_WORDS, oov_token="<unk>")
     # Add explicit negation and surprise-related tokens to guarantee indices
-    tokenizer.fit_on_texts(all_texts + ['__NEGATED__', 'wow', 'unexpected', 'surprise']) 
+    tokenizer.fit_on_texts(all_texts + ['__NEGATED__', 'wow', 'unexpected', 'surprise', 'not_happy', 'not_good']) 
     
     num_words = min(MAX_WORDS, len(tokenizer.word_index) + 1)
 
@@ -203,7 +200,7 @@ def load_and_train_model():
     # Use a standard deviation for most words
     std_dev_normal = 0.05
     # Use a larger standard deviation for negation/surprise words to make their signal stronger
-    std_dev_negated = 0.20 # Increased initialization strength
+    std_dev_negated = 0.20 
     
     embedding_matrix = np.random.normal(loc=0.0, scale=std_dev_normal, size=(num_words, EMBEDDING_DIM))
     
@@ -212,12 +209,11 @@ def load_and_train_model():
         if index >= num_words:
             continue
             
-        # 4a. Anti-Negation Mirror Logic
+        # 4a. Anti-Negation Mirror Logic (Guarantees not_happy != happy)
         if word.startswith('not_') or word.startswith('never_'):
             # Hyper-initialize the negated token
             embedding_matrix[index] = np.random.normal(loc=0.0, scale=std_dev_negated, size=(EMBEDDING_DIM,))
             
-            # Apply anti-negation mirror logic
             if word.startswith('not_'):
                 original_word = word.split('_', 1)[1] 
                 original_index = tokenizer.word_index.get(original_word)
@@ -227,7 +223,7 @@ def load_and_train_model():
                     embedding_matrix[index] = -embedding_matrix[original_index]
             
         # 4b. Hyper-initialize Surprise keywords to separate them from Joy
-        if word in ['wow', 'surprise', 'unexpected', 'shocked', 'unbelievable']:
+        if word in ['wow', 'surprise', 'unexpected', 'shocked', 'unbelievable', 'didn\'t', 'didnt', 'did_not']:
              embedding_matrix[index] = np.random.normal(loc=0.0, scale=std_dev_negated, size=(EMBEDDING_DIM,))
             
     # Set unique initialization for the global negation flag
@@ -236,14 +232,10 @@ def load_and_train_model():
         embedding_matrix[negated_index] = np.random.normal(loc=0.0, scale=std_dev_negated, size=(EMBEDDING_DIM,))
 
 
-    # 5. Build and Train Ensemble Models
-    st.info(f"Building and training ensemble of 3 deep learning models for up to {EPOCHS} epochs...")
+    # 5. Build and Train the Gated Ensemble Model
+    st.info(f"Building and training the Gated Multi-Path Ensemble Model for up to {EPOCHS} epochs...")
     
-    models = [
-        build_cnn_model(num_words, embedding_matrix),
-        build_bilstm_model(num_words, embedding_matrix),
-        build_gru_model(num_words, embedding_matrix)
-    ]
+    model = build_gated_ensemble_model(num_words, embedding_matrix)
 
     early_stopping = EarlyStopping(
         monitor='val_loss', 
@@ -252,37 +244,26 @@ def load_and_train_model():
         verbose=0 
     )
 
-    # Train all models silently
-    for i, model in enumerate(models):
-        st.info(f"Training Model {i+1}...")
-        try:
-            model.fit(
-                train_padded, 
-                train_labels_one_hot,
-                epochs=EPOCHS, 
-                batch_size=128, 
-                validation_split=0.1,
-                class_weight=class_weights, 
-                callbacks=[early_stopping],
-                verbose=0 
-            )
-        except Exception as e:
-            st.error(f"Error during training Model {i+1}: {e}")
-            continue
+    try:
+        model.fit(
+            train_padded, 
+            train_labels_one_hot,
+            epochs=EPOCHS, 
+            batch_size=128, 
+            validation_split=0.1,
+            class_weight=class_weights, 
+            callbacks=[early_stopping],
+            verbose=0 
+        )
+    except Exception as e:
+        st.error(f"Error during training the Gated Ensemble Model: {e}")
+        return None, tokenizer, {'accuracy': 0, 'precision': 0, 'recall': 0, 'f1_score': 0}
             
     # 6. Ensemble Prediction and Evaluation
     
-    pred_probs_list = [model.predict(test_padded, verbose=0) for model in models if model is not None]
+    pred_probs = model.predict(test_padded, verbose=0)
     
-    if not pred_probs_list:
-        st.error("All models failed to train. Cannot proceed with evaluation.")
-        return models, tokenizer, {'accuracy': 0, 'precision': 0, 'recall': 0, 'f1_score': 0}
-        
-    # Soft Voting: Average the probabilities across all models
-    ensemble_probs = np.mean(pred_probs_list, axis=0)
-    
-    # Final prediction based on ensemble average
-    y_pred = np.argmax(ensemble_probs, axis=1)
+    y_pred = np.argmax(pred_probs, axis=1)
     
     # Calculate Metrics based on ensemble prediction
     accuracy = accuracy_score(test_labels, y_pred)
@@ -297,13 +278,13 @@ def load_and_train_model():
         'f1_score': f1
     }
 
-    st.success(f"Model Training Complete! Ensemble Accuracy: {accuracy:.4f}")
-    return models, tokenizer, metrics
+    st.success(f"Model Training Complete! Gated Ensemble Accuracy: {accuracy:.4f}")
+    return model, tokenizer, metrics
 
 
 # --- Prediction Function ---
-def predict_emotion(ensemble_models, tokenizer, text):
-    """Predicts the emotion of a given review text using the ensemble models (Soft Voting)."""
+def predict_emotion(model, tokenizer, text):
+    """Predicts the emotion of a given review text using the single Gated Ensemble model."""
     # 1. Apply the same negation preprocessing as training
     preprocessed_text = handle_negation([text])[0]
     
@@ -311,13 +292,8 @@ def predict_emotion(ensemble_models, tokenizer, text):
     sequence = tokenizer.texts_to_sequences([preprocessed_text])
     padded_sequence = pad_sequences(sequence, maxlen=MAX_LEN, padding='post', truncating='post')
     
-    # 3. Predict using ensemble
-    pred_probs_list = [model.predict(padded_sequence, verbose=0) for model in ensemble_models if model is not None]
-    
-    if not pred_probs_list:
-        return "ERROR", None
-        
-    ensemble_prediction = np.mean(pred_probs_list, axis=0)[0]
+    # 3. Predict using the single model
+    ensemble_prediction = model.predict(padded_sequence, verbose=0)[0]
     
     predicted_id = np.argmax(ensemble_prediction)
     predicted_label = id_to_label[predicted_id].capitalize()
@@ -532,9 +508,10 @@ def main():
     
     # Load and train the model (cached)
     try:
-        models, tokenizer, metrics = load_and_train_model()
+        model, tokenizer, metrics = load_and_train_model()
         st.session_state.is_trained = True
         st.session_state.metrics = metrics
+        st.session_state.model = model # Store model instance for prediction
     except Exception as e:
         # In case of initialization failure, log error and show a warning
         st.error(f"Failed to initialize model: {e}")
@@ -579,7 +556,7 @@ def main():
 
     # --- Analysis Button ---
     if st.button("Analyze All 10 Reviews", use_container_width=True, type="primary"):
-        if not st.session_state.is_trained:
+        if not st.session_state.is_trained or st.session_state.model is None:
             st.warning("Model is not fully initialized. Please wait a moment and try again.")
             return
 
@@ -593,7 +570,7 @@ def main():
                 st.session_state.analysis_results = [] # Clear results if incomplete
                 return
 
-            predicted_emotion = predict_emotion(models, tokenizer, review)
+            predicted_emotion = predict_emotion(st.session_state.model, tokenizer, review)
             all_emotions.append(predicted_emotion)
             
             st.session_state.analysis_results.append({
