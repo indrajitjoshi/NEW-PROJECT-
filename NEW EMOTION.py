@@ -24,7 +24,7 @@ EMBEDDING_DIM = 128     # Dimension of the word embeddings
 RNN_UNITS = 200         # Capacity of LSTM/GRU cells
 DENSE_UNITS = 512       # High capacity for complex feature separation
 NUM_CLASSES = 6
-EPOCHS = 20             # Increased epochs for stable convergence toward 95% target
+EPOCHS = 15             # Reduced from 20 to 15 for a faster, more stable startup.
 NUM_REVIEWS = 10        
 TRAINABLE_EMBEDDING = True # Allow fine-tuning for better anti-bias integration
 
@@ -124,15 +124,14 @@ def build_cnn_model(num_words, embedding_matrix):
 
 def build_bilstm_model(num_words, embedding_matrix):
     """
-    Builds the stable three-layer BiLSTM model (enhanced for long-range context 
-    and higher accuracy, specifically targeting complex negative sentiment).
+    Builds the stable two-layer BiLSTM model. Reverted to 2 layers to drastically reduce 
+    training time, addressing the long startup hang.
     """
     model = Sequential([
         create_embedding_layer(num_words, embedding_matrix),
         Dropout(0.3),
         Bidirectional(LSTM(RNN_UNITS, return_sequences=True, dropout=0.1)), # Layer 1
-        Bidirectional(LSTM(RNN_UNITS, return_sequences=True, dropout=0.1)), # Layer 2 (Added for depth)
-        Bidirectional(LSTM(RNN_UNITS)),                                      # Final layer (Layer 3)
+        Bidirectional(LSTM(RNN_UNITS)),                                      # Final layer (Layer 2)
         Dense(DENSE_UNITS, activation='relu'),
         Dropout(0.5),
         Dense(NUM_CLASSES, activation='softmax')
