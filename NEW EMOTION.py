@@ -47,11 +47,12 @@ SAMPLE_REVIEWS = {
     "surprise": "I never expected this quality! Wow, what an amazing, unbelievable surprise!" 
 }
 
-# --- Preprocessing Function (Aggressive Negation Handling) ---
+# --- Preprocessing Function (Aggressive Negation Handling & Polarity Enforcement) ---
 
 def handle_negation(texts):
     """
-    Handles negation aggressively by modifying phrases and appending a global negation flag.
+    Handles negation aggressively by modifying phrases, applying polarity switch, 
+    and appending a global negation flag.
     """
     negation_words = ['not', 'no', 'never', "don't", "isn't", "wasn't", "wouldn't", 
                       "couldn't", "won't", "can't", 'do not', "did not", "will not",
@@ -62,29 +63,39 @@ def handle_negation(texts):
     for text in texts:
         did_negate = False
         words = text.split()
+        new_text_words = []
         
         for i, word in enumerate(words):
+            current_word = word
             
-            if word.lower() in negation_words and i + 1 < len(words):
-                 # Force the negation token creation (e.g., 'not_happy')
-                 words[i+1] = f"not_{words[i+1]}"
-                 words[i] = '' 
-                 did_negate = True
-            
-            if re.match(r'^(un|in|im|ir)\w+', word.lower()):
-                 did_negate = True
+            if current_word.lower() in negation_words:
+                did_negate = True
+                
+                # If a negation word is found, force the creation of the negated token
+                if i + 1 < len(words):
+                    next_word = words[i+1]
+                    new_text_words.append(f"not_{next_word}")
+                    # Skip the next word, as it has been combined
+                    words[i+1] = '' 
+                
+                # Append a high-signal negative semantic marker after the negation word
+                new_text_words.append("__NEG_SIGNAL__")
+            else:
+                if current_word != '':
+                    new_text_words.append(current_word)
         
-        new_text = " ".join(filter(None, words))
+        new_text = " ".join(new_text_words)
         
+        # Append global flag to signal negation presence for all models
         if did_negate:
-            new_text = f"{new_text} __NEGATED__"
+            new_text = f"{new_text} __NEGATED_SENTENCE__"
             
         processed_texts.append(new_text)
         
     return processed_texts
 
 
-# --- Ensemble Model Building Functions ---
+# --- Ensemble Model Building Functions (Unchanged for stability) ---
 
 def create_embedding_layer(num_words, embedding_matrix=None, name='embedding_layer'):
     """Creates the Embedding layer, initialized with pre-trained vectors."""
@@ -201,7 +212,7 @@ def load_and_train_model():
     # 3. Tokenization and Sequencing
     tokenizer = Tokenizer(num_words=MAX_WORDS, oov_token="<unk>")
     # Add key semantic tokens to guarantee indexing
-    tokenizer.fit_on_texts(all_texts + ['__NEGATED__', 'surprise', 'love', 'not_happy', 'not_good']) 
+    tokenizer.fit_on_texts(all_texts + ['__NEGATED_SENTENCE__', '__NEG_SIGNAL__', 'surprise', 'love', 'not_happy', 'not_good']) 
     
     num_words = min(MAX_WORDS, len(tokenizer.word_index) + 1)
 
@@ -240,10 +251,15 @@ def load_and_train_model():
         if word in ['surprise', 'love', 'adore', 'ecstatic', 'furious']:
              embedding_matrix[index] = np.random.normal(loc=0.0, scale=std_dev_negated * 1.5, size=(EMBEDDING_DIM,))
             
-    # Set unique initialization for the global negation flag
-    negated_index = tokenizer.word_index.get('__negated__', 0)
+    # Set unique initialization for the global negation flag and new signal token
+    negated_index = tokenizer.word_index.get('__NEGATED_SENTENCE__', 0)
+    neg_signal_index = tokenizer.word_index.get('__NEG_SIGNAL__', 0)
+    
     if negated_index < num_words:
         embedding_matrix[negated_index] = np.random.normal(loc=0.0, scale=std_dev_negated, size=(EMBEDDING_DIM,))
+    if neg_signal_index < num_words:
+        # Give the new negative signal token a strong, unique vector
+        embedding_matrix[neg_signal_index] = np.random.normal(loc=-0.5, scale=std_dev_negated * 2, size=(EMBEDDING_DIM,))
 
 
     # 5. Build and Train the Soft Voting Ensemble (3 separate models)
