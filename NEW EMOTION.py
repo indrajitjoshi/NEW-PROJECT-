@@ -8,7 +8,7 @@ from tensorflow.keras.preprocessing.sequence import pad_sequences
 from tensorflow.keras.models import Sequential, Model
 from tensorflow.keras.layers import Embedding, Bidirectional, LSTM, Dense, Dropout, Conv1D, GlobalMaxPooling1D, GRU, Input
 from tensorflow.keras.callbacks import EarlyStopping
-from tensorflow.keras.initializers import Constant, Zeros, Ones # Note: Constant not used in final layer now
+from tensorflow.keras.initializers import Constant, Zeros, Ones
 from tensorflow.keras.regularizers import l2 
 import os
 import sys
@@ -236,9 +236,9 @@ def load_and_train_model():
                 # Set the mirror vector (stable negative of the base vector)
                 embedding_matrix[index] = -embedding_matrix[original_index] * 1.0 
             
-        # Hyper-initialize key tokens for surprise and love to boost signal
+        # CRITICAL FIX: Hyper-initialize key tokens for LOVE and SURPRISE to boost signal
         if word in ['surprise', 'love', 'adore', 'ecstatic', 'furious']:
-             embedding_matrix[index] = np.random.normal(loc=0.0, scale=std_dev_negated, size=(EMBEDDING_DIM,))
+             embedding_matrix[index] = np.random.normal(loc=0.0, scale=std_dev_negated * 1.5, size=(EMBEDDING_DIM,))
             
     # Set unique initialization for the global negation flag
     negated_index = tokenizer.word_index.get('__negated__', 0)
@@ -566,8 +566,8 @@ def main():
             # Use sticky input value if available
             sticky_value = st.session_state.analysis_results[i]['review'] if len(st.session_state.analysis_results) == NUM_REVIEWS else default_review
             
-            # Display target emotion clearly in the label
-            label_text = f"Review #{i+1} (Target: {emotion_key.capitalize()})"
+            # UI Formatting Fix: Only show Review #X
+            label_text = f"Review #{i+1}"
             
             review_text = st.text_area(
                 label_text, 
