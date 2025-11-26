@@ -23,11 +23,11 @@ import tensorflow as tf
 # --- Configuration (MAXIMAL STABLE SOFT VOTING ENSEMBLE) ---
 MAX_WORDS = 20000       
 MAX_LEN = 150           
-EMBEDDING_DIM = 64      
-RNN_UNITS = 64          
-DENSE_UNITS = 128       
+EMBEDDING_DIM = 72      # Slightly increased for feature space separation
+RNN_UNITS = 72          # Slightly increased capacity
+DENSE_UNITS = 144       # Slightly increased capacity
 NUM_CLASSES = 6
-EPOCHS = 12             # Reduced epochs for faster iteration
+EPOCHS = 15             # Increased epochs for convergence
 NUM_REVIEWS = 10        
 TRAINABLE_EMBEDDING = True 
 REGULARIZATION_RATE = 1e-4 
@@ -189,7 +189,8 @@ def load_and_train_model():
     
     label_counts = df_train['label'].value_counts()
     max_count = label_counts.max()
-    target_count = int(max_count * 0.7) 
+    # CRITICAL FIX: Reduced balancing target from 0.7 to 0.8 to prevent polarity collapse
+    target_count = int(max_count * 0.8) 
 
     balanced_samples = []
     
